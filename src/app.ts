@@ -4,7 +4,7 @@ import cors from "cors";
 import helmet from "helmet";
 import morgan from "morgan";
 import pino from "pino-http";
-import { errorHandler } from "./middlewares/errorHandler.js";
+import errorHandler from "./middlewares/errorHandler.js";
 import healthRoutes from "./routes/health.route.js";
 import authRoutes from "./routes/auth.route.js";
 import adminRoutes from "./routes/admin.route.js";
@@ -27,6 +27,6 @@ app.use("/api/v1/admin", adminRoutes);
 app.use("/api/v1/categories", categoryRoutes);
 
 // Global Error Handler
-app.use(errorHandler);
+app.use(errorHandler as any);
 
 export default app;

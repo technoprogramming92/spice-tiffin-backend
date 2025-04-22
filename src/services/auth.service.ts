@@ -1,6 +1,6 @@
 // Purpose: Business logic to handle customer registration
 import bcrypt from "bcryptjs";
-import { Customer } from "../models/Customer.model.js";
+import { Customer, ICustomer } from "../models/Customer.model.js";
 import axios from "axios";
 import { RegisterInput } from "../validators/authSchema.js";
 import jwt from "jsonwebtoken";
@@ -41,7 +41,7 @@ export const registerCustomer = async (data: RegisterInput) => {
   });
 
   // Create user
-  const newCustomer = await Customer.create({
+  const newCustomer = (await Customer.create({
     fullName,
     email,
     mobile,
@@ -53,7 +53,7 @@ export const registerCustomer = async (data: RegisterInput) => {
     city: "",
     postalCode: "",
     currentLocation: "",
-  });
+  })) as ICustomer;
 
   await stripe.customers.update(stripeCustomer.id, {
     metadata: { platformUserId: newCustomer._id.toString() },

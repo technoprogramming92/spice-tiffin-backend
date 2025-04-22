@@ -1,39 +1,36 @@
-// Purpose: Mongoose schema and model for customer registration
-import mongoose, { Schema, Document } from "mongoose";
+import { Schema, model, Document, Types } from "mongoose";
 
 export interface ICustomer extends Document {
+  _id: Types.ObjectId; // <-- add this to avoid `_id` as `unknown`
   fullName: string;
   email: string;
   mobile: string;
   password: string;
-  verification: boolean;
-  otpSessionId?: string;
-  otpCode?: string;
   stripeCustomerId?: string;
+  verification: boolean;
+  otpCode?: string;
   otpExpiresAt?: Date;
+  otpSessionId?: string;
   address?: string;
   city?: string;
   postalCode?: string;
   currentLocation?: string;
 }
 
-const customerSchema = new Schema<ICustomer>(
-  {
-    fullName: { type: String, required: true },
-    email: { type: String, required: true, unique: true },
-    mobile: { type: String, required: true, unique: true },
-    password: { type: String, required: true },
-    verification: { type: Boolean, default: false },
-    otpSessionId: { type: String },
-    otpCode: { type: String },
-    stripeCustomerId: { type: String, default: null },
-    otpExpiresAt: { type: Date },
-    address: { type: String, default: "" },
-    city: { type: String, default: "" },
-    postalCode: { type: String, default: "" },
-    currentLocation: { type: String, default: "" },
-  },
-  { timestamps: true }
-);
+const customerSchema = new Schema<ICustomer>({
+  fullName: { type: String, required: true },
+  email: { type: String, required: true },
+  mobile: { type: String, required: true },
+  password: { type: String, required: true },
+  stripeCustomerId: String,
+  verification: { type: Boolean, default: false },
+  otpCode: String,
+  otpExpiresAt: Date,
+  otpSessionId: String,
+  address: String,
+  city: String,
+  postalCode: String,
+  currentLocation: String,
+});
 
-export const Customer = mongoose.model<ICustomer>("Customer", customerSchema);
+export const Customer = model<ICustomer>("Customer", customerSchema);
