@@ -15,6 +15,7 @@ export interface IPackage extends Document {
   days: number;
   createdAt: Date;
   updatedAt: Date;
+  category: mongoose.Types.ObjectId;
 }
 
 const packageSchema = new Schema<IPackage>(
@@ -25,6 +26,11 @@ const packageSchema = new Schema<IPackage>(
     type: {
       type: String,
       enum: Object.values(PackageType),
+      required: true,
+    },
+    category: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Category",
       required: true,
     },
     image: { type: String },

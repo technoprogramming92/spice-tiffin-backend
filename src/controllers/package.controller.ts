@@ -23,7 +23,7 @@ export const createPackage = async (req: Request, res: Response) => {
   if (!parsed.success)
     return res.status(400).json({ success: false, error: parsed.error.errors });
 
-  const { name, description, price, type, image } = parsed.data;
+  const { name, description, price, category, type, image } = parsed.data;
 
   const exists = await Package.findOne({ name });
   if (exists)
@@ -37,6 +37,7 @@ export const createPackage = async (req: Request, res: Response) => {
     name,
     description,
     price,
+    category,
     type,
     image,
     days,
@@ -50,7 +51,7 @@ export const createPackage = async (req: Request, res: Response) => {
 };
 
 export const getAllPackages = async (_req: Request, res: Response) => {
-  const packages = await Package.find().sort({ createdAt: 1 });
+  const packages = await Package.find().populate("category", "name");
 
   res.status(200).json({
     success: true,

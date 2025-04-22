@@ -4,6 +4,7 @@ export const createPackageSchema = z.object({
   name: z.string().min(2),
   description: z.string().optional(),
   price: z.number().min(0),
+  category: z.string().min(1, "Category is required"),
   type: z.enum(["trial", "weekly", "monthly"]),
   image: z.string().optional(),
 });
