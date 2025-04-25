@@ -1,102 +1,121 @@
+// controllers/package.controller.ts
 import { Request, Response } from "express";
-import { Package, PackageType } from "../models/Package.model.js";
+import { Package } from "../models/Package.model.js";
 import {
   createPackageSchema,
   updatePackageSchema,
 } from "../validators/packageSchema.js";
 
-const getDaysByType = (type: string): number => {
-  switch (type) {
-    case PackageType.TRIAL:
-      return 1;
-    case PackageType.WEEKLY:
-      return 6;
-    case PackageType.MONTHLY:
-      return 24;
-    default:
-      return 0;
+export const createPackage = async (req: Request, res: Response) => {
+  const parsed = createPackageSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({
+      success: false,
+      message: "Validation failed",
+      error: parsed.error.errors,
+    });
+  }
+
+  try {
+    const newPackage = await Package.create(parsed.data);
+    const populatedPackage = await Package.findById(newPackage._id).populate(
+      "category",
+      "name _id"
+    );
+    return res.status(201).json({
+      success: true,
+      message: "Package created successfully",
+      data: populatedPackage,
+    });
+  } catch (err) {
+    return res.status(500).json({
+      success: false,
+      message: "Error creating package",
+      error: err,
+    });
   }
 };
 
-export const createPackage = async (req: Request, res: Response) => {
-  const parsed = createPackageSchema.safeParse(req.body);
-  if (!parsed.success)
-    return res.status(400).json({ success: false, error: parsed.error.errors });
-
-  const { name, description, price, category, type, image } = parsed.data;
-
-  const exists = await Package.findOne({ name });
-  if (exists)
-    return res
-      .status(409)
-      .json({ success: false, message: "Package already exists" });
-
-  const days = getDaysByType(type);
-
-  const newPackage = await Package.create({
-    name,
-    description,
-    price,
-    category,
-    type,
-    image,
-    days,
-  });
-
-  res.status(201).json({
-    success: true,
-    message: "Package created",
-    data: newPackage,
-  });
-};
-
 export const getAllPackages = async (_req: Request, res: Response) => {
-  const packages = await Package.find().populate("category", "name");
+  try {
+    const packages = await Package.find()
+      .populate("category", "name _id")
+      .sort({ createdAt: 1 });
 
-  res.status(200).json({
-    success: true,
-    message: "Packages retrieved",
-    packages,
-  });
-};
-
-export const getSinglePackage = async (req: Request, res: Response) => {
-  const pkg = await Package.findById(req.params.id);
-  if (!pkg)
-    return res
-      .status(404)
-      .json({ success: false, message: "Package not found" });
-
-  res.status(200).json({ success: true, package: pkg });
+    return res.status(200).json({
+      success: true,
+      message: "Packages fetched successfully",
+      data: packages,
+    });
+  } catch (err) {
+    return res.status(500).json({
+      success: false,
+      message: "Error fetching packages",
+      error: err,
+    });
+  }
 };
 
 export const updatePackage = async (req: Request, res: Response) => {
+  const { id } = req.params;
   const parsed = updatePackageSchema.safeParse(req.body);
-  if (!parsed.success)
-    return res.status(400).json({ success: false, error: parsed.error.errors });
 
-  const updated = await Package.findByIdAndUpdate(
-    req.params.id,
-    { ...parsed.data, days: getDaysByType(parsed.data.type || "") },
-    { new: true }
-  );
+  if (!parsed.success) {
+    return res.status(400).json({
+      success: false,
+      message: "Validation failed",
+      error: parsed.error.errors,
+    });
+  }
 
-  if (!updated)
-    return res
-      .status(404)
-      .json({ success: false, message: "Package not found" });
+  try {
+    const updated = await Package.findByIdAndUpdate(id, parsed.data, {
+      new: true,
+    }).populate("category", "name _id");
 
-  res
-    .status(200)
-    .json({ success: true, message: "Package updated", data: updated });
+    if (!updated) {
+      return res.status(404).json({
+        success: false,
+        message: "Package not found",
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: "Package updated successfully",
+      data: updated,
+    });
+  } catch (err) {
+    return res.status(500).json({
+      success: false,
+      message: "Error updating package",
+      error: err,
+    });
+  }
 };
 
 export const deletePackage = async (req: Request, res: Response) => {
-  const deleted = await Package.findByIdAndDelete(req.params.id);
-  if (!deleted)
-    return res
-      .status(404)
-      .json({ success: false, message: "Package not found" });
+  const { id } = req.params;
 
-  res.status(200).json({ success: true, message: "Package deleted" });
+  try {
+    const deleted = await Package.findByIdAndDelete(id);
+
+    if (!deleted) {
+      return res.status(404).json({
+        success: false,
+        message: "Package not found",
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: "Package deleted successfully",
+    });
+  } catch (err) {
+    return res.status(500).json({
+      success: false,
+      message: "Error deleting package",
+      error: err,
+    });
+  }
 };

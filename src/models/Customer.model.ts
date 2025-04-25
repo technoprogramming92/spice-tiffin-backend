@@ -1,7 +1,7 @@
 import { Schema, model, Document, Types } from "mongoose";
 
 export interface ICustomer extends Document {
-  _id: Types.ObjectId; // <-- add this to avoid `_id` as `unknown`
+  _id: Types.ObjectId;
   fullName: string;
   email: string;
   mobile: string;

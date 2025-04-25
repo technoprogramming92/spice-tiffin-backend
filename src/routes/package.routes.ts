@@ -1,19 +1,25 @@
-import express from "express";
+// routes/package.routes.ts
+import { Router } from "express";
 import {
   createPackage,
-  deletePackage,
   getAllPackages,
-  getSinglePackage,
   updatePackage,
+  deletePackage,
 } from "../controllers/package.controller.js";
 import { catchAsync } from "../utils/catchAsync.js";
 
-const router = express.Router();
+const router = Router();
 
+// @route   POST /api/v1/packages
 router.post("/", catchAsync(createPackage));
+
+// @route   GET /api/v1/packages
 router.get("/", catchAsync(getAllPackages));
-router.get("/:id", catchAsync(getSinglePackage));
+
+// @route   PUT /api/v1/packages/:id
 router.put("/:id", catchAsync(updatePackage));
+
+// @route   DELETE /api/v1/packages/:id
 router.delete("/:id", catchAsync(deletePackage));
 
 export default router;

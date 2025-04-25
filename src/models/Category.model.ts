@@ -1,23 +1,25 @@
-// src/models/Category.model.ts
-import mongoose from "mongoose";
+// models/Category.model.ts
+import mongoose, { Schema, Document } from "mongoose";
 
-const categorySchema = new mongoose.Schema(
+export interface ICategory extends Document {
+  name: string;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+const categorySchema = new Schema<ICategory>(
   {
     name: {
       type: String,
-      required: true,
+      required: [true, "Category name is required"],
       unique: true,
       trim: true,
     },
-    // packages: [
-    //   {
-    //     type: mongoose.Schema.Types.ObjectId,
-    //     ref: "Package",
-    //     default: [],
-    //   },
-    // ],
   },
   { timestamps: true }
 );
 
-export const Category = mongoose.model("Category", categorySchema);
+// Add index to enforce uniqueness
+categorySchema.index({ name: 1 }, { unique: true });
+
+export const Category = mongoose.model<ICategory>("Category", categorySchema);
