@@ -25,7 +25,7 @@ const packageSchema = new Schema<IPackage>(
     name: {
       type: String,
       required: [true, "Package name is required"],
-      unique: true,
+
       trim: true,
     },
     description: {
