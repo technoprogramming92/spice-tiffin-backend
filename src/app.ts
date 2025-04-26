@@ -10,6 +10,7 @@ import authRoutes from "./routes/auth.route.js";
 import adminRoutes from "./routes/admin.route.js";
 import categoryRoutes from "./routes/category.routes.js";
 import packageRoutes from "./routes/package.routes.js";
+import customerRoutes from "./routes/customer.route.js";
 
 const app = express();
 app.disable("etag");
@@ -27,6 +28,7 @@ app.use("/api/v1/auth", authRoutes);
 app.use("/api/v1/admin", adminRoutes);
 app.use("/api/v1/categories", categoryRoutes);
 app.use("/api/v1/packages", packageRoutes);
+app.use("/api/v1/customer", customerRoutes);
 
 // Global Error Handler
 app.use(errorHandler as any);

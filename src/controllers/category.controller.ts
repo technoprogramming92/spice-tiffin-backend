@@ -44,12 +44,8 @@ export const createCategory = async (req: Request, res: Response) => {
 
 export const getAllCategories = async (_req: Request, res: Response) => {
   try {
-    console.log("[Backend Log] Attempting to fetch categories...");
     const categories = await Category.find().sort({ createdAt: 1 });
-    console.log(
-      `[Backend Log] Found ${categories.length} categories in DB:`,
-      JSON.stringify(categories)
-    );
+
     return res.status(200).json({
       success: true,
       message: "Categories fetched successfully",
