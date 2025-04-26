@@ -9,18 +9,25 @@ import { catchAsync } from "../utils/catchAsync.js"; // Assuming you have this u
 
 const router = Router();
 
-// Apply the 'protect' middleware to all routes in this file
-router.use(protect);
-
 // @route   GET /api/v1/customer/profile
 // @desc    Get logged-in customer's profile
 // @access  Private
-router.get("/profile", catchAsync(getMyProfile));
+// --- ADD 'protect' middleware directly here ---
+router.get(
+  "/profile",
+  protect, // Apply middleware before the controller
+  catchAsync(getMyProfile)
+);
 
 // @route   PUT /api/v1/customer/profile
 // @desc    Update logged-in customer's profile
 // @access  Private
-router.put("/profile", catchAsync(updateMyProfile));
+// --- ADD 'protect' middleware directly here ---
+router.put(
+  "/profile",
+  protect, // Apply middleware before the controller
+  catchAsync(updateMyProfile)
+);
 
 // You could also use PATCH for partial updates, PUT often implies replacing the resource (though commonly used for updates too)
 router.patch("/profile", catchAsync(updateMyProfile));
