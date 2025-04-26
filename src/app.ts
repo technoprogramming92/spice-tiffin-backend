@@ -21,6 +21,13 @@ app.disable("etag");
 // Global Middleware
 app.use(helmet());
 app.use(cors({ origin: "*" }));
+// --- IMPORTANT: Stripe Webhook Raw Body Parser ---
+// This MUST come BEFORE express.json() and be specific to the webhook route.
+app.use(
+  "/api/v1/webhooks/stripe", // Match the exact webhook route path
+  express.raw({ type: "application/json" }) // Use raw body parser for this route
+);
+// --- End Stripe Webhook Middleware ---
 app.use(express.json());
 app.use(morgan("dev")); // Switch to pino in production
 app.use(pino());
@@ -34,7 +41,6 @@ app.use("/api/v1/packages", packageRoutes);
 app.use("/api/v1/customer", customerRoutes);
 app.use("/api/v1/payments", paymentRoutes);
 app.use("/api/v1/orders", orderRoutes);
-app.use("/api/v1/webhooks/stripe", express.raw({ type: "application/json" }));
 app.use("/api/v1/webhooks", webhookRoutes);
 
 // Global Error Handler
