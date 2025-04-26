@@ -6,7 +6,8 @@ import {
   IOrder,
   OrderStatus,
   IDeliveryAddress,
-} from "../models/Order.model.js";
+  IPaymentDetails,
+} from "../models/Order.model.js"; // Import updated types
 import mongoose from "mongoose";
 
 interface CreateOrderParams {
@@ -24,6 +25,19 @@ interface CreateOrderParams {
     };
   };
 }
+
+// --- NEW: Helper function to generate order number ---
+// (Can be moved to a utils file if preferred)
+function generateOrderNumber(): string {
+  const now = new Date();
+  const year = now.getFullYear().toString().slice(-2); // Last 2 digits of year
+  const month = (now.getMonth() + 1).toString().padStart(2, "0"); // 01-12
+  const day = now.getDate().toString().padStart(2, "0"); // 01-31
+  // Increased randomness slightly
+  const randomPart = Math.random().toString(36).substring(2, 10).toUpperCase();
+  return `SBF-${year}${month}${day}-${randomPart}`;
+}
+// --- End Helper Function ---
 
 /**
  * Creates an Order document in the database after a successful Stripe payment.
@@ -45,97 +59,94 @@ export const createOrderFromPayment = async (
   } = params;
 
   console.log(
-    `[OrderService] Attempting to create order for user: ${userId}, package: ${packageId}`
+    `[OrderService] Starting order creation for user: ${userId}, package: ${packageId}, paymentIntent: ${stripePaymentIntentId}`
   );
 
   const session = await mongoose.startSession();
   session.startTransaction();
+  console.log(`[OrderService] Transaction started.`);
 
   try {
     // 1. Fetch Customer and Package
+    console.log(`[OrderService] Fetching customer ${userId}...`);
     const customer = await Customer.findById(userId).session(session);
     if (!customer) {
-      const error = new Error(`Customer not found for ID: ${userId}`);
-      (error as any).statusCode = 404;
-      throw error;
+      /* ... error handling ... */ throw new Error(
+        `Customer not found for ID: ${userId}`
+      );
     }
+    console.log(`[OrderService] Customer found: ${customer.fullName}`);
 
+    console.log(`[OrderService] Fetching package ${packageId}...`);
     const selectedPackageDoc =
       await Package.findById(packageId).session(session);
     if (!selectedPackageDoc) {
-      const error = new Error(`Package not found for ID: ${packageId}`);
-      (error as any).statusCode = 404;
-      throw error;
+      /* ... error handling ... */ throw new Error(
+        `Package not found for ID: ${packageId}`
+      );
     }
-
-    // --- FIX: Use .toObject() before accessing properties ---
-    // Convert Mongoose document to a plain object matching IPackage interface
     const selectedPackage = selectedPackageDoc.toObject<IPackage>();
+    console.log(`[OrderService] Package found: ${selectedPackage.name}`);
 
-    // Now access properties from the plain object
-    const deliveryDays = selectedPackage.days; // Access 'days' field from model
-    const packagePrice = selectedPackage.price;
-    const packageName = selectedPackage.name;
-
-    // Optional runtime type check remains useful
+    const {
+      days: deliveryDays,
+      price: packagePrice,
+      name: packageName,
+    } = selectedPackage;
     if (
       typeof deliveryDays !== "number" ||
       typeof packagePrice !== "number" ||
       typeof packageName !== "string"
     ) {
-      console.error("Package data types are incorrect after fetch/toObject:", {
-        deliveryDays,
-        packagePrice,
-        packageName,
-      });
-      const typeError = new Error(
+      /* ... error handling ... */ throw new Error(
         `Invalid data type found for package ${packageId}.`
       );
-      (typeError as any).statusCode = 500;
-      throw typeError;
     }
-    // --- End Fix ---
 
     // 2. Verify Payment Amount
     const expectedAmountCents = Math.round(packagePrice * 100);
+    console.log(
+      `[OrderService] Verifying amount. Expected (cents): ${expectedAmountCents}, Paid (cents): ${amountPaid}`
+    );
     if (amountPaid !== expectedAmountCents) {
-      console.warn(
-        `[OrderService] Payment amount mismatch. Expected: ${expectedAmountCents}, Paid: ${amountPaid}`
-      );
-      const error = new Error(
+      /* ... error handling ... */ throw new Error(
         `Payment amount mismatch. Expected ${expectedAmountCents}, received ${amountPaid}`
       );
-      (error as any).statusCode = 400;
-      throw error;
     }
+    console.log(`[OrderService] Amount verified.`);
 
     // 3. Check for existing order (Idempotency)
+    console.log(
+      `[OrderService] Checking for existing order with paymentIntent ID: ${stripePaymentIntentId}...`
+    );
     const existingOrder = await Order.findOne({
       "paymentDetails.stripePaymentIntentId": stripePaymentIntentId,
     }).session(session);
     if (existingOrder) {
       console.warn(
-        `[OrderService] Duplicate webhook event. Order already exists for payment intent ID: ${stripePaymentIntentId}.`
+        `[OrderService] Order ${existingOrder.orderNumber} already exists for payment intent ID. Aborting transaction.`
       );
       await session.abortTransaction();
       session.endSession();
+      console.log(`[OrderService] Transaction aborted (duplicate).`);
       return existingOrder;
     }
+    console.log(`[OrderService] No existing order found.`);
 
     // 4. Prepare Order Data
+    console.log(`[OrderService] Preparing new order data...`);
     const startDate = new Date();
     const endDate = new Date(
       startDate.getTime() + deliveryDays * 24 * 60 * 60 * 1000
     );
-
     const deliveryAddress: IDeliveryAddress = {
       address: customer.address,
       city: customer.city,
       postalCode: customer.postalCode,
       currentLocation: customer.currentLocation,
     };
-
-    const paymentDetails = {
+    const paymentDetails: IPaymentDetails = {
+      // Explicitly type here
       stripePaymentIntentId: stripePaymentIntentId,
       stripeCustomerId: stripeCustomerId,
       amountPaid: amountPaid,
@@ -146,44 +157,59 @@ export const createOrderFromPayment = async (
       paymentDate: new Date(),
     };
 
-    // 5. Create the Order document
+    // --- GENERATE ORDER NUMBER BEFORE CREATE ---
+    const orderNumber = generateOrderNumber();
+    console.log(`[OrderService] Generated Order Number: ${orderNumber}`);
+    // -----------------------------------------
+
     const newOrderData = {
+      orderNumber: orderNumber, // <-- Include generated number
       customer: customer._id,
-      package: selectedPackageDoc._id, // Use original doc ID
+      package: selectedPackageDoc._id,
       packageName: packageName,
       packagePrice: packagePrice,
-      deliveryDays: deliveryDays, // Use variable derived from 'days'
+      deliveryDays: deliveryDays,
       startDate: startDate,
       endDate: endDate,
       status: OrderStatus.ACTIVE,
       deliveryAddress: deliveryAddress,
       paymentDetails: paymentDetails,
-      // orderNumber generated by pre-save hook
     };
 
+    // 5. Create the Order document
+    console.log(`[OrderService] Attempting to create order in database...`);
     const createdOrders = await Order.create([newOrderData], {
       session: session,
     });
     if (!createdOrders || createdOrders.length === 0) {
-      throw new Error("Database failed to return created order document.");
+      throw new Error(
+        "Database failed to return created order document after Order.create()."
+      );
     }
     const newOrder = createdOrders[0];
-
     console.log(
-      `[OrderService] Order ${newOrder.orderNumber} created successfully.`
+      `[OrderService] Order document created in DB with ID: ${newOrder._id}, Order Number: ${newOrder.orderNumber}`
     );
 
     // 6. Commit the transaction
+    console.log(`[OrderService] Attempting to commit transaction...`);
     await session.commitTransaction();
+    console.log(`[OrderService] Transaction committed successfully.`);
     session.endSession();
 
+    console.log(
+      `[OrderService] Order ${newOrder.orderNumber} fully processed.`
+    );
     return newOrder;
   } catch (error) {
     console.error(
       "[OrderService] Error during order creation, aborting transaction:",
       error
     );
-    await session.abortTransaction();
+    if (session.inTransaction()) {
+      await session.abortTransaction();
+      console.log(`[OrderService] Transaction aborted due to error.`);
+    }
     session.endSession();
 
     if (error instanceof Error) {

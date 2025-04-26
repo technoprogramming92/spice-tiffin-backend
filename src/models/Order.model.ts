@@ -18,16 +18,16 @@ export interface IDeliveryAddress {
   currentLocation?: string | null;
 }
 
-// --- NEW: Interface for nested payment details ---
+// Interface for nested payment details
 export interface IPaymentDetails {
-  stripePaymentIntentId: string; // ID from successful Stripe payment (moved here)
-  stripeCustomerId: string; // Associated Stripe Customer ID (moved here)
-  amountPaid: number; // Amount paid in smallest currency unit (e.g., cents)
-  currency: string; // Currency code (e.g., 'cad')
-  paymentMethodType?: string; // e.g., 'card' (from Stripe)
-  cardBrand?: string; // e.g., 'visa', 'mastercard' (if available)
-  cardLast4?: string; // Last 4 digits of the card (if available)
-  paymentDate: Date; // Timestamp of successful payment (usually close to createdAt)
+  stripePaymentIntentId: string;
+  stripeCustomerId: string;
+  amountPaid: number;
+  currency: string;
+  paymentMethodType?: string;
+  cardBrand?: string;
+  cardLast4?: string;
+  paymentDate: Date;
 }
 
 // Interface defining the Order document structure
@@ -36,13 +36,12 @@ export interface IOrder extends Document {
   customer: Types.ObjectId | ICustomer;
   package: Types.ObjectId | IPackage;
   packageName: string;
-  packagePrice: number; // Price in standard currency unit (e.g., 19.99 CAD)
+  packagePrice: number;
   deliveryDays: number;
   startDate: Date;
   endDate: Date;
   status: OrderStatus;
   deliveryAddress: IDeliveryAddress;
-  // --- CHANGE: Payment details are now nested ---
   paymentDetails: IPaymentDetails;
   createdAt: Date;
   updatedAt: Date;
@@ -53,7 +52,7 @@ const orderSchema = new Schema<IOrder>(
   {
     orderNumber: {
       type: String,
-      required: true,
+      required: true, // Keep required validation
       unique: true,
       index: true,
     },
@@ -74,7 +73,6 @@ const orderSchema = new Schema<IOrder>(
       trim: true,
     },
     packagePrice: {
-      // Price in e.g., 19.99 CAD
       type: Number,
       required: true,
       min: [0, "Package price cannot be negative"],
@@ -110,7 +108,6 @@ const orderSchema = new Schema<IOrder>(
       required: true,
       _id: false,
     },
-    // --- CHANGE: Nested Payment Details ---
     paymentDetails: {
       type: {
         stripePaymentIntentId: {
@@ -120,37 +117,21 @@ const orderSchema = new Schema<IOrder>(
           index: true,
         },
         stripeCustomerId: { type: String, required: true, index: true },
-        amountPaid: { type: Number, required: true }, // Store amount in cents
-        currency: { type: String, required: true, default: "cad" }, // Default to CAD
+        amountPaid: { type: Number, required: true },
+        currency: { type: String, required: true, default: "cad" },
         paymentMethodType: { type: String },
         cardBrand: { type: String },
         cardLast4: { type: String },
-        paymentDate: { type: Date, required: true, default: Date.now }, // Record payment time
+        paymentDate: { type: Date, required: true, default: Date.now },
       },
       required: true,
-      _id: false, // Don't create a separate _id for the subdocument
+      _id: false,
     },
-    // --- Removed standalone stripePaymentIntentId and stripeCustomerId ---
   },
   {
-    timestamps: true, // Automatically add createdAt and updatedAt for the Order itself
+    timestamps: true,
   }
 );
-
-// Pre-save hook for order number generation (Keep existing)
-orderSchema.pre<IOrder>("save", async function (next) {
-  if (this.isNew && !this.orderNumber) {
-    const now = new Date();
-    const year = now.getFullYear().toString().slice(-2);
-    const month = (now.getMonth() + 1).toString().padStart(2, "0");
-    const day = now.getDate().toString().padStart(2, "0");
-    const randomPart = Math.random().toString(36).substring(2, 8).toUpperCase();
-    this.orderNumber = `SBF-${year}${month}${day}-${randomPart}`;
-  }
-  next();
-});
-
-// Indexes are defined inline via `index: true` or `unique: true`
 
 // Create and export the Order model
 export const Order = mongoose.model<IOrder>("Order", orderSchema);
