@@ -11,6 +11,9 @@ import adminRoutes from "./routes/admin.route.js";
 import categoryRoutes from "./routes/category.routes.js";
 import packageRoutes from "./routes/package.routes.js";
 import customerRoutes from "./routes/customer.route.js";
+import paymentRoutes from "./routes/payment.route.js";
+import orderRoutes from "./routes/order.route.js";
+import webhookRoutes from "./routes/webhook.route.js";
 
 const app = express();
 app.disable("etag");
@@ -29,6 +32,10 @@ app.use("/api/v1/admin", adminRoutes);
 app.use("/api/v1/categories", categoryRoutes);
 app.use("/api/v1/packages", packageRoutes);
 app.use("/api/v1/customer", customerRoutes);
+app.use("/api/v1/payments", paymentRoutes);
+app.use("/api/v1/orders", orderRoutes);
+app.use("/api/v1/webhooks/stripe", express.raw({ type: "application/json" }));
+app.use("/api/v1/webhooks", webhookRoutes);
 
 // Global Error Handler
 app.use(errorHandler as any);
