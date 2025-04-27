@@ -31,8 +31,4 @@ const customerSchema = new Schema<ICustomer>(
   { timestamps: true }
 ); // Keep timestamps
 
-// Optional: Add compound index if needed
-customerSchema.index({ email: 1 });
-customerSchema.index({ mobile: 1 });
-
 export const Customer = model<ICustomer>("Customer", customerSchema);
