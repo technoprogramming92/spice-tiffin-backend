@@ -3,9 +3,14 @@ import "dotenv/config";
 import app from "./app.js";
 import { connectDB } from "./config/db.js";
 
+import { scheduleOrderExpirationJob } from "./jobs/orderExpiration.job.js";
+
 const PORT = process.env.PORT || 5000;
 
 const bootstrap = async () => {
+  console.log("Scheduling background jobs...");
+  scheduleOrderExpirationJob(); // Call the function to schedule the job
+  console.log("Background jobs scheduled.");
   await connectDB();
   app.listen(PORT, () => {
     console.log(`🚀 Server running at http://localhost:${PORT}`);

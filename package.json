@@ -19,6 +19,7 @@
     "@types/jsonwebtoken": "^9.0.9",
     "@types/morgan": "^1.9.9",
     "@types/node": "^22.14.1",
+    "@types/node-cron": "^3.0.11",
     "@types/supertest": "^6.0.3",
     "cors": "^2.8.5",
     "dotenv-flow": "^4.1.0",
@@ -46,6 +47,7 @@
     "bcryptjs": "^3.0.2",
     "dotenv": "^16.5.0",
     "jsonwebtoken": "^9.0.2",
+    "node-cron": "^3.0.3",
     "pino-http": "^10.4.0",
     "stripe": "^18.0.0"
   }

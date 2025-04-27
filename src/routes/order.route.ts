@@ -1,8 +1,9 @@
 // routes/order.route.ts
 import { Router } from "express";
-import { getMyOrders } from "../controllers/order.controller.js"; // Import the controller
-import { protect } from "../middlewares/authMiddleware.js"; // Import auth middleware
-import { catchAsync } from "../utils/catchAsync.js"; // Import async error handler
+import { getMyOrders, getAllOrders } from "../controllers/order.controller.js"; // Import the controller
+import { protect } from "../middlewares/authMiddleware.js";
+import { protectAdmin } from "../middlewares/adminAuthMiddleware.js";
+import { catchAsync } from "../utils/catchAsync.js";
 
 const router = Router();
 
@@ -17,8 +18,16 @@ router.get(
   catchAsync(getMyOrders) // Handle async errors
 );
 
-// Add other order-specific routes here later if needed
-// e.g., router.get('/:orderId', protect, catchAsync(getOrderDetails));
-// e.g., router.patch('/:orderId/cancel', protect, catchAsync(cancelMyOrder));
+// --- Admin Route ---
+/**
+ * @route   GET /api/v1/orders
+ * @desc    Get ALL orders (for admin panel)
+ * @access  Private (Admin)
+ */
+router.get(
+  "/", // Mounts at the base '/api/v1/orders'
+  protectAdmin, // TODO: Replace with actual admin protection middleware (e.g., protectAdmin)
+  catchAsync(getAllOrders)
+);
 
 export default router;
