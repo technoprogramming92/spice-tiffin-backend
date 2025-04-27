@@ -14,6 +14,7 @@ import customerRoutes from "./routes/customer.route.js";
 import paymentRoutes from "./routes/payment.route.js";
 import orderRoutes from "./routes/order.route.js";
 import webhookRoutes from "./routes/webhook.route.js";
+import cityRoutes from "./routes/city.route.js";
 
 const app = express();
 app.disable("etag");
@@ -41,6 +42,7 @@ app.use("/api/v1/packages", packageRoutes);
 app.use("/api/v1/customer", customerRoutes);
 app.use("/api/v1/payments", paymentRoutes);
 app.use("/api/v1/orders", orderRoutes);
+app.use("/api/v1/cities", cityRoutes);
 app.use("/api/v1/webhooks", webhookRoutes);
 
 // Global Error Handler
