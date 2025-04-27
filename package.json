@@ -49,6 +49,7 @@
     "jsonwebtoken": "^9.0.2",
     "node-cron": "^3.0.3",
     "pino-http": "^10.4.0",
-    "stripe": "^18.0.0"
+    "stripe": "^18.0.0",
+    "twilio": "^5.5.2"
   }
 }
