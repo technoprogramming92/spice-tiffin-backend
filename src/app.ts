@@ -17,6 +17,7 @@ import webhookRoutes from "./routes/webhook.route.js";
 import cityRoutes from "./routes/city.route.js";
 import driverRoutes from "./routes/driver.route.js";
 import assignmentRoutes from "./routes/assignment.route.js";
+import addonRoutes from "./routes/addon.routes.js";
 
 const app = express();
 app.disable("etag");
@@ -48,6 +49,7 @@ app.use("/api/v1/cities", cityRoutes);
 app.use("/api/v1/drivers", driverRoutes);
 app.use("/api/v1/webhooks", webhookRoutes);
 app.use("/api/v1/admin/assignments", assignmentRoutes);
+app.use("/api/v1/addons", addonRoutes);
 
 // Global Error Handler
 app.use(errorHandler as any);
