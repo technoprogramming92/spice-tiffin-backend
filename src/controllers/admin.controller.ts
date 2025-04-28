@@ -2,6 +2,7 @@ import { NextFunction, Request, Response } from "express";
 import { adminLoginSchema } from "../validators/adminSchema.js";
 import { loginAdmin } from "../services/admin.service.js";
 import { Customer } from "../models/Customer.model.js";
+import { Order } from "../models/Order.model.js";
 
 export const adminLogin = async (req: Request, res: Response) => {
   try {
@@ -65,4 +66,52 @@ export const getAllCustomers = async (
     (fetchError as any).statusCode = 500;
     next(fetchError); // Pass error to global handler
   }
+};
+
+/**
+ * @description Fetches active orders (endDate >= today) for the Admin Panel.
+ * @route GET /api/v1/admin/orders/active
+ * @access Private (Admin only)
+ */
+export const getActiveOrders = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
+  // Get the current date at the start of the day (00:00:00) in the server's local timezone.
+  // IMPORTANT: Consider server timezone vs. user timezone if needed.
+  // Using UTC might be more consistent if dealing with multiple timezones.
+  // const startOfToday = new Date();
+  // startOfToday.setUTCHours(0, 0, 0, 0); // Example using UTC start of day
+
+  // Using local server time start of day:
+  const startOfToday = new Date();
+  startOfToday.setHours(0, 0, 0, 0);
+
+  console.log(
+    `[AdminController] Fetching active orders with endDate >= ${startOfToday.toISOString()}`
+  );
+
+  const activeOrders = await Order.find({
+    status: "Active", // Ensure the order is currently marked as Active
+    endDate: { $gte: startOfToday }, // Filter where the end date is today or later
+  })
+    .populate({
+      path: "customer",
+      select: "name email phone address", // Select relevant customer fields
+    })
+    .populate({
+      path: "package",
+      select: "name type duration", // Select relevant package fields
+    })
+    .sort({ endDate: 1 }); // Sort by soonest ending date first (optional)
+
+  console.log(`[AdminController] Found ${activeOrders.length} active orders.`);
+
+  res.status(200).json({
+    success: true,
+    message: "Active orders fetched successfully.",
+    count: activeOrders.length,
+    data: activeOrders,
+  });
 };
