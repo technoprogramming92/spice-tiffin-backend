@@ -2,7 +2,8 @@ import { NextFunction, Request, Response } from "express";
 import { adminLoginSchema } from "../validators/adminSchema.js";
 import { loginAdmin } from "../services/admin.service.js";
 import { Customer } from "../models/Customer.model.js";
-import { Order } from "../models/Order.model.js";
+import { Order, DeliveryStatus } from "../models/Order.model.js";
+import { Driver } from "../models/Driver.model.js";
 
 export const adminLogin = async (req: Request, res: Response) => {
   try {
@@ -114,4 +115,73 @@ export const getActiveOrders = async (
     count: activeOrders.length,
     data: activeOrders,
   });
+};
+
+export const getAssignableOrders = async (req: Request, res: Response) => {
+  try {
+    console.log("[AdminController] Fetching assignable orders...");
+
+    const assignableOrders = await Order.find({
+      deliveryStatus: DeliveryStatus.PENDING_ASSIGNMENT, // Use the enum value
+      "deliveryAddress.latitude": { $ne: null }, // Ensure latitude exists
+      "deliveryAddress.longitude": { $ne: null }, // Ensure longitude exists
+      // Optional: Add date filters if needed, e.g., for today's orders only
+      // endDate: { $gte: startOfToday, $lt: endOfToday }
+    })
+      .populate("customer", "fullName email") // Populate basic customer info
+      .populate("package", "name type") // Populate basic package info
+      .sort({ createdAt: 1 }); // Sort by oldest first (optional)
+
+    console.log(
+      `[AdminController] Found ${assignableOrders.length} assignable orders.`
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: "Assignable orders fetched successfully.",
+      count: assignableOrders.length,
+      data: assignableOrders,
+    });
+  } catch (error: any) {
+    console.error("[AdminController] Error fetching assignable orders:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Error fetching assignable orders",
+      error: error instanceof Error ? error.message : "Unknown server error",
+    });
+  }
+};
+
+/**
+ * @description Fetches drivers who are currently active.
+ * @route GET /api/v1/admin/drivers/active
+ * @access Private (Admin only)
+ */
+export const getActiveDrivers = async (req: Request, res: Response) => {
+  try {
+    console.log("[AdminController] Fetching active drivers...");
+
+    const activeDrivers = await Driver.find({
+      status: "Active", // Filter by status
+    }).sort({ fullName: 1 }); // Sort alphabetically by name (optional)
+    // Password is automatically excluded due to `select: false` in the Driver model
+
+    console.log(
+      `[AdminController] Found ${activeDrivers.length} active drivers.`
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: "Active drivers fetched successfully.",
+      count: activeDrivers.length,
+      data: activeDrivers,
+    });
+  } catch (error: any) {
+    console.error("[AdminController] Error fetching active drivers:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Error fetching active drivers",
+      error: error instanceof Error ? error.message : "Unknown server error",
+    });
+  }
 };
