@@ -1,13 +1,13 @@
 // src/controllers/addon.controller.ts
 
 import { Request, Response } from "express";
-import Addon from "../models/addon.model"; // Adjust path if needed
+import Addon from "../models/addon.model.js"; // Adjust path if needed
 
 // --- Assume you create these Zod schemas in ../validators/ ---
 import {
   createAddonSchema, // Validates { name: string, price: number, image: string }
   updateAddonSchema, // Validates { name?: string, price?: number, image?: string } - fields are optional
-} from "../validators/addonSchema"; // Adjust path if needed
+} from "../validators/addonSchema.js"; // Adjust path if needed
 // -------------------------------------------------------------
 
 // --- Create a new Addon ---
