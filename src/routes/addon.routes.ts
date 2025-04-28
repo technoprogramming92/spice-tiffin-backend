@@ -9,7 +9,7 @@ import {
   getAddonById, // Added for fetching single addon
   updateAddon,
   deleteAddon,
-} from "../controllers/addon.controller"; // Adjust path if needed, ensure '.js' if compiling
+} from "../controllers/addon.controller.js"; // Adjust path if needed, ensure '.js' if compiling
 
 const router = Router();
 
