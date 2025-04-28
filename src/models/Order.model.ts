@@ -2,75 +2,66 @@
 
 import mongoose, { Schema, Document, Model, Types } from "mongoose";
 
-// --- Define Delivery Status Enum ---
-// Using an enum helps enforce allowed values
+// --- Define and Export Delivery Status Enum ---
+// Ensure other files import THIS name
 export enum DeliveryStatus {
   PENDING_ASSIGNMENT = "Pending Assignment",
   ASSIGNED = "Assigned",
-  OUT_FOR_DELIVERY = "Out for Delivery", // Driver has started the route / picked up
-  DELIVERED = "Delivered", // Successfully completed
-  FAILED = "Failed", // Delivery attempted but failed
-  CANCELLED = "Cancelled", // Order cancelled before/during delivery
+  OUT_FOR_DELIVERY = "Out for Delivery",
+  DELIVERED = "Delivered",
+  FAILED = "Failed",
+  CANCELLED = "Cancelled",
 }
 
-// --- Interface for the Delivery Address Sub-document ---
-interface IDeliveryAddress {
+// --- Define and EXPORT Delivery Address Interface ---
+export interface IDeliveryAddress {
+  // <--- Added export
   address?: string;
   city?: string;
   postalCode?: string;
-  currentLocation?: string; // Optional, from original schema
-  // --- NEW: Geolocation Coordinates ---
-  latitude?: number; // Added for mapping & routing
-  longitude?: number; // Added for mapping & routing
-  // Optional: Add GeoJSON structure later if complex spatial queries are needed
-  // location?: {
-  //   type: { type: String, enum: ['Point'], default: 'Point' };
-  //   coordinates: { type: [Number], index: '2dsphere' }; // [longitude, latitude]
-  // };
+  currentLocation?: string;
+  latitude?: number;
+  longitude?: number;
 }
 
-// --- Interface representing an Order document ---
+// --- Define and EXPORT Order Interface ---
 export interface IOrder extends Document {
+  // <--- Added export
   orderNumber: string;
-  customer: Types.ObjectId; // Reference to Customer model
-  package: Types.ObjectId; // Reference to Package model
+  customer: Types.ObjectId;
+  package: Types.ObjectId;
   packageName: string;
   packagePrice: number;
   deliveryDays: number;
   startDate: Date;
   endDate: Date;
-  status: "Active" | "Expired" | "Cancelled"; // Original order status
+  status: "Active" | "Expired" | "Cancelled";
   stripePaymentIntentId: string;
   stripeCustomerId: string;
-  deliveryAddress: IDeliveryAddress; // Use the sub-document interface
+  deliveryAddress: IDeliveryAddress;
   createdAt: Date;
   updatedAt: Date;
-
-  // --- NEW: Delivery Management Fields ---
-  assignedDriver: Types.ObjectId | null; // Reference to Driver model, null if unassigned
-  deliveryStatus: DeliveryStatus; // Enum for detailed delivery lifecycle status
-  deliverySequence: number | null; // Order sequence in an optimized route, null if not sequenced
-  proofOfDeliveryUrl?: string; // URL of the uploaded proof image
+  assignedDriver: Types.ObjectId | null;
+  deliveryStatus: DeliveryStatus;
+  deliverySequence: number | null;
+  proofOfDeliveryUrl?: string;
 }
 
-// Interface for the Order model statics (optional)
-export interface IOrderModel extends Model<IOrder> {}
+// Interface for the Order model statics (optional, export if needed elsewhere)
+export interface IOrderModel extends Model<IOrder> {} // <--- Added export
 
 // --- Mongoose Schema Definition ---
+// Schema definition remains the same as before...
 const orderSchema = new Schema<IOrder, IOrderModel>(
   {
     orderNumber: { type: String, required: true, unique: true },
     customer: {
       type: Schema.Types.ObjectId,
-      ref: "Customer", // Ensure 'Customer' matches your customer model name
+      ref: "Customer",
       required: true,
       index: true,
     },
-    package: {
-      type: Schema.Types.ObjectId,
-      ref: "Package", // Ensure 'Package' matches your package model name
-      required: true,
-    },
+    package: { type: Schema.Types.ObjectId, ref: "Package", required: true },
     packageName: { type: String, required: true },
     packagePrice: { type: Number, required: true },
     deliveryDays: { type: Number, required: true },
@@ -79,50 +70,37 @@ const orderSchema = new Schema<IOrder, IOrderModel>(
     status: {
       type: String,
       required: true,
-      enum: ["Active", "Expired", "Cancelled"], // Keep original status if needed, or integrate with deliveryStatus
+      enum: ["Active", "Expired", "Cancelled"],
       default: "Active",
       index: true,
     },
     stripePaymentIntentId: { type: String, required: true, unique: true },
     stripeCustomerId: { type: String, required: true, index: true },
     deliveryAddress: {
-      // Define the sub-document structure
       address: { type: String },
       city: { type: String },
       postalCode: { type: String },
-      currentLocation: { type: String }, // Optional from original
-      // --- NEW: Geo Coordinates ---
-      latitude: { type: Number }, // Store as number
-      longitude: { type: Number }, // Store as number
+      currentLocation: { type: String },
+      latitude: { type: Number },
+      longitude: { type: Number },
     },
-
-    // --- NEW: Delivery Management Fields ---
     assignedDriver: {
       type: Schema.Types.ObjectId,
-      ref: "Driver", // Ensure 'Driver' matches your driver model name
-      default: null, // Default to null (unassigned)
-      index: true, // Index for easily querying by driver
+      ref: "Driver",
+      default: null,
+      index: true,
     },
     deliveryStatus: {
       type: String,
-      enum: Object.values(DeliveryStatus), // Use enum values
-      default: DeliveryStatus.PENDING_ASSIGNMENT, // Default for new orders
-      index: true, // Index for querying by status
+      enum: Object.values(DeliveryStatus),
+      default: DeliveryStatus.PENDING_ASSIGNMENT,
+      index: true,
     },
-    deliverySequence: {
-      type: Number,
-      default: null, // Default to null (not sequenced)
-    },
-    proofOfDeliveryUrl: {
-      type: String, // Store the URL from cloud storage
-    },
+    deliverySequence: { type: Number, default: null },
+    proofOfDeliveryUrl: { type: String },
   },
-  {
-    timestamps: true, // Adds createdAt and updatedAt automatically
-  }
+  { timestamps: true }
 );
-
-// --- Optional: Define virtuals or methods if needed ---
 
 // --- Export the Model ---
 export const Order: IOrderModel = mongoose.model<IOrder, IOrderModel>(
