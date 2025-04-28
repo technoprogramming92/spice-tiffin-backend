@@ -88,5 +88,42 @@ export const getAssignedOrders = async (req: Request, res: Response) => {
   }
 };
 
+// Make sure the 'export' keyword is present!
+export const assignOrdersToDriver = async (req: Request, res: Response) => {
+  // --- Your logic to assign orders goes here ---
+  const { driverId, orderIds } = req.body; // Example: Get data from request body
+
+  // 1. Validate input (driverId, orderIds)
+  if (!driverId || !Array.isArray(orderIds) || orderIds.length === 0) {
+    return res
+      .status(400)
+      .json({
+        success: false,
+        message: "Driver ID and a list of order IDs are required.",
+      });
+  }
+
+  try {
+    // 2. Call a service function to perform the database update
+    // const result = await yourAssignmentService.assignOrders(driverId, orderIds);
+
+    // 3. Send a success response
+    res.status(200).json({
+      success: true,
+      message: `Successfully assigned ${orderIds.length} orders to driver ${driverId}.`,
+      // data: result // Optionally return updated data
+    });
+  } catch (error: any) {
+    // 4. Handle errors
+    console.error("Error assigning orders:", error);
+    res
+      .status(500)
+      .json({
+        success: false,
+        message: error.message || "Failed to assign orders.",
+      });
+  }
+};
+
 // --- Add assignOrdersToDriver function here later ---
 // export const assignOrdersToDriver = async (req: Request, res: Response) => { ... };

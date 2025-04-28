@@ -2,7 +2,10 @@
 
 import { Router } from "express";
 import { protectAdmin } from "../middlewares/adminAuthMiddleware.js";
-import { getAssignedOrders } from "../controllers/assignment.controller.js";
+import {
+  getAssignedOrders,
+  assignOrdersToDriver,
+} from "../controllers/assignment.controller.js";
 import { catchAsync } from "../utils/catchAsync.js";
 
 const router = Router();
@@ -19,7 +22,11 @@ const router = Router();
  */
 router.get("/", protectAdmin, catchAsync(getAssignedOrders));
 
-// --- Add POST route for assigning orders here later ---
-// router.post('/', protect, restrictTo('admin'), validate(assignmentSchema), assignOrdersToDriver);
+router.post(
+  "/",
+  protectAdmin, // Apply necessary authentication/authorization
+  // validate(assignmentSchema), // Optional: Add validation middleware if you have it
+  catchAsync(assignOrdersToDriver) // Use the controller function that handles assignment
+);
 
 export default router;
