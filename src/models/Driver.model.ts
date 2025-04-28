@@ -68,10 +68,6 @@ const driverSchema = new Schema<IDriver, IDriverModel>(
   }
 );
 
-// --- Indexing ---
-// Index unique phone number for faster lookups and uniqueness enforcement
-driverSchema.index({ phone: 1 }, { unique: true });
-
 // --- Mongoose Middleware ---
 
 // Hash password before saving a new driver or when password is modified
