@@ -98,7 +98,7 @@ export const getActiveOrders = async (
   })
     .populate({
       path: "customer",
-      select: "name email phone address", // Select relevant customer fields
+      select: "fullName email phone address", // Select relevant customer fields
     })
     .populate({
       path: "package",
