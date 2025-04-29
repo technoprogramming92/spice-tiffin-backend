@@ -1,6 +1,7 @@
 // controllers/order.controller.ts
 import { Request, Response, NextFunction } from "express";
-import { Order } from "../models/Order.model.js"; // Import the Order model
+import { Order } from "../models/Order.model.js";
+import mongoose from "mongoose";
 
 /**
  * @description Fetches the order history for the currently authenticated customer.
@@ -90,5 +91,89 @@ export const getAllOrders = async (
     );
     (fetchError as any).statusCode = 500;
     next(fetchError); // Use return next() if preferred
+  }
+};
+
+/**
+ * @description Fetches a single order by its ID, ensuring it belongs to the authenticated customer.
+ * @route GET /api/v1/orders/:orderId
+ * @access Private (Requires customer authentication)
+ */
+export const getOrderById = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const { orderId } = req.params; // Get orderId from URL parameters
+    const userId = req.userId; // Get userId from 'protect' middleware
+
+    // 1. Check authentication (should be covered by middleware, but good practice)
+    if (!userId) {
+      // This case might already be handled by 'protect' middleware sending 401
+      console.warn(
+        "[OrderController] getOrderById: No userId found on request."
+      );
+      res
+        .status(401)
+        .json({ success: false, message: "Authentication required." });
+      return; // Exit function
+    }
+
+    // 2. Validate the orderId format
+    if (!mongoose.Types.ObjectId.isValid(orderId)) {
+      console.warn(
+        `[OrderController] getOrderById: Invalid Order ID format: ${orderId}`
+      );
+      res
+        .status(400)
+        .json({ success: false, message: "Invalid Order ID format." });
+      return; // Exit function
+    }
+
+    console.log(
+      `[OrderController] Fetching order ID: ${orderId} for customer ID: ${userId}`
+    );
+
+    // 3. Find the order by ID AND customer ID
+    // This ensures a customer can only fetch their own orders
+    const order = await Order.findOne({ _id: orderId, customer: userId });
+    // Optionally populate fields if needed by the frontend on this page
+    // .populate("package", "name image"); // Example populate
+
+    // 4. Handle Order Not Found
+    if (!order) {
+      console.log(
+        `[OrderController] Order not found or does not belong to customer. Order ID: ${orderId}, Customer ID: ${userId}`
+      );
+      res.status(404).json({ success: false, message: "Order not found." });
+      return; // Exit function
+    }
+
+    console.log(
+      `[OrderController] Found order ${orderId} for customer ${userId}.`
+    );
+
+    // 5. Send Success Response
+    res.status(200).json({
+      success: true,
+      message: "Order fetched successfully.",
+      data: order,
+    });
+  } catch (error) {
+    // 6. Handle other potential errors (e.g., database connection issues)
+    console.error(
+      `[OrderController] Error fetching order by ID (${req.params?.orderId}):`,
+      error
+    );
+    // Pass error to the centralized error handler via next()
+    // Assuming catchAsync utility handles this, otherwise use standard next(error)
+    const fetchError = new Error(
+      `Failed to fetch order: ${error instanceof Error ? error.message : "Unknown error"}`
+    );
+    (fetchError as any).statusCode = 500; // Set appropriate status code if possible
+    next(fetchError);
+    // If not using catchAsync, you might structure the catch differently:
+    // res.status(500).json({ success: false, message: `Failed to fetch order: ${error instanceof Error ? error.message : "Unknown error"}` });
   }
 };

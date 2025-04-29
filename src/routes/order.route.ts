@@ -1,6 +1,10 @@
 // routes/order.route.ts
 import { Router } from "express";
-import { getMyOrders, getAllOrders } from "../controllers/order.controller.js"; // Import the controller
+import {
+  getMyOrders,
+  getAllOrders,
+  getOrderById,
+} from "../controllers/order.controller.js"; // Import the controller
 import { protect } from "../middlewares/authMiddleware.js";
 import { protectAdmin } from "../middlewares/adminAuthMiddleware.js";
 import { catchAsync } from "../utils/catchAsync.js";
@@ -16,6 +20,18 @@ router.get(
   "/my", // Route path relative to '/api/v1/orders'
   protect, // Ensure user is logged in
   catchAsync(getMyOrders) // Handle async errors
+);
+
+// --- Single Order Route ---
+/**
+ * @route   GET /api/v1/orders/:orderId
+ * @desc    Get a specific order by ID (for the authenticated customer)
+ * @access  Private (Customer)
+ */
+router.get(
+  "/:orderId", // Matches URLs like /api/v1/orders/60b8d295f1d2a1001c8e4abc
+  protect, // Ensure CUSTOMER is logged in
+  catchAsync(getOrderById) // Use the new controller function
 );
 
 // --- Admin Route ---
