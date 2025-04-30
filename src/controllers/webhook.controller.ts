@@ -2,7 +2,10 @@
 import { Request, Response, NextFunction } from "express";
 import Stripe from "stripe";
 import { stripe } from "../utils/stripe.js"; // Initialized Stripe instance
-import { createOrderFromPayment } from "../services/order.service.js"; // Import order creation service
+import { createOrderFromPayment } from "../services/order.service.js";
+import { AddonOrderService } from "../services/addon-order.service.js";
+
+const addonOrderService = new AddonOrderService();
 
 /**
  * Handles incoming webhook events from Stripe.
@@ -144,9 +147,27 @@ export const handleStripeEvents = async (
         }
         break; // End case 'checkout.session.completed'
 
-      // --- Handle other event types if needed ---
-      // case 'invoice.payment_succeeded': ...
-      // case 'payment_intent.succeeded': ...
+      case "payment_intent.succeeded":
+        const paymentIntent = event.data.object as Stripe.PaymentIntent;
+        console.log(
+          `[Webhook] Processing payment_intent.succeeded: ${paymentIntent.id}`
+        );
+        // --- MODIFIED: Use the instantiated service ---
+        // The service handles finding the order by PI ID and confirming
+        await addonOrderService.confirmAddonOrderPayment(paymentIntent.id);
+        console.log(
+          `[Webhook] Addon payment confirmation processed for PI: ${paymentIntent.id}`
+        );
+        break;
+
+      case "payment_intent.payment_failed":
+        const failedPaymentIntent = event.data.object as Stripe.PaymentIntent;
+        console.warn(
+          `[Webhook] Received payment_intent.payment_failed: ${failedPaymentIntent.id}`,
+          failedPaymentIntent.last_payment_error
+        );
+        // TODO: Update AddonOrder status to 'Failed' via service if applicable
+        break;
 
       default:
         // Acknowledge unhandled event types without erroring

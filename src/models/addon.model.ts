@@ -41,6 +41,6 @@ const addonSchema = new Schema<IAddon>(
 
 // 4. Create and export the Mongoose model
 // Mongoose will create/use a collection named 'addons' (pluralized, lowercased)
-const Addon = model<IAddon>("Addon", addonSchema);
+export const Addon = model<IAddon>("Addon", addonSchema);
 
 export default Addon;
