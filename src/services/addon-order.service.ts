@@ -94,6 +94,9 @@ export class AddonOrderService {
 
     // Create Stripe Payment Intent (Remains the same)
     console.log(`[AddonOrderService] Creating Stripe Payment Intent...`);
+    console.log(
+      `[AddonOrderService] Sending amount to Stripe: ${totalAmount} cents CAD`
+    );
     const paymentIntent = await stripe.paymentIntents.create({
       amount: totalAmount,
       currency: "cad",

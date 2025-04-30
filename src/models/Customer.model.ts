@@ -13,6 +13,10 @@ export interface ICustomer extends Document {
   city?: string;
   postalCode?: string;
   currentLocation?: string;
+  passwordResetTokenHash?: string | null;
+  passwordResetTokenExpires?: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
 }
 
 const customerSchema = new Schema<ICustomer>(
@@ -27,6 +31,8 @@ const customerSchema = new Schema<ICustomer>(
     city: String,
     postalCode: String,
     currentLocation: String,
+    passwordResetTokenHash: { type: String, select: false }, // Don't select by default
+    passwordResetTokenExpires: { type: Date, select: false },
   },
   { timestamps: true }
 ); // Keep timestamps

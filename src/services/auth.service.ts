@@ -1,315 +1,507 @@
 // src/services/auth.service.ts
-import bcrypt from "bcryptjs";
+import bcrypt from "bcryptjs"; // Use bcryptjs consistently as imported
 import { Customer, ICustomer } from "../models/Customer.model.js";
-import type { RegisterInput } from "../validators/authSchema.js"; // Assuming path is correct
+// Assuming RegisterInput type is defined elsewhere if needed by other functions
+// import type { RegisterInput } from "../validators/authSchema.js";
 import jwt from "jsonwebtoken";
-import { stripe } from "../utils/stripe.js";
+import { stripe } from "../utils/stripe.js"; // Assuming stripe setup exists
 import twilio from "twilio"; // Import twilio
+import crypto from "crypto"; // Import crypto for final reset token
+import { customerService } from "./customer.service.js"; // Import CustomerService instance
+
+// --- Constants ---
+const SALT_ROUNDS = 10; // Define salt rounds (consider moving to config)
+const OTP_LENGTH = 4; // Or 6, should match Twilio Verify settings if applicable
+const RESET_TOKEN_EXPIRY_HOURS = 1; // Expiry for the final reset token
 
 // --- Twilio Setup ---
-// Ensure required Twilio environment variables are present
 const accountSid = process.env.TWILIO_ACCOUNT_SID;
 const authToken = process.env.TWILIO_AUTH_TOKEN;
 const verifyServiceSid = process.env.TWILIO_VERIFY_SERVICE_SID;
 
-// Basic check during initialization
 if (!accountSid || !authToken || !verifyServiceSid) {
-  console.error(
-    "FATAL ERROR: Missing Twilio credentials in environment variables (TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_VERIFY_SERVICE_SID)."
-  );
-  // Optionally throw an error to prevent startup without credentials
-  // throw new Error("Twilio configuration missing.");
+  console.error("FATAL ERROR: Missing Twilio credentials.");
+  // Optional: throw new Error("Twilio configuration missing.");
 }
-
-// Initialize Twilio client (only if credentials exist)
 const twilioClient =
   accountSid && authToken ? twilio(accountSid, authToken) : null;
 // --- End Twilio Setup ---
 
-// --- JWT Generation (Keep existing) ---
+// --- Helper Functions ---
+
+/** Generates JWT */
 const generateToken = (userId: string): string => {
   if (!process.env.JWT_SECRET) {
-    throw new Error("JWT_SECRET is missing from .env");
+    console.error("FATAL ERROR: JWT_SECRET is not set.");
+    throw new Error("Server configuration error [J1].");
   }
   return jwt.sign({ userId }, process.env.JWT_SECRET, { expiresIn: "7d" });
 };
 
-// --- Registration (Keep mostly existing, remove OTP fields) ---
+/** Generate a secure random token and its hash */
+async function generateSecureToken(): Promise<{
+  plainToken: string;
+  hashedToken: string;
+}> {
+  const plainToken = crypto.randomBytes(32).toString("hex");
+  const salt = await bcrypt.genSalt(SALT_ROUNDS);
+  const hashedToken = await bcrypt.hash(plainToken, salt);
+  return { plainToken, hashedToken };
+}
+
+/** Helper to format phone number for Twilio */
+const formatPhoneNumberForTwilio = (phoneNumber: string): string => {
+  let formattedMobile = phoneNumber.trim();
+  if (!formattedMobile.startsWith("+")) {
+    // Basic assumption - make this more robust if handling many international codes
+    if (
+      formattedMobile.length === 10 &&
+      (process.env.DEFAULT_COUNTRY_CODE === "CA" ||
+        process.env.DEFAULT_COUNTRY_CODE === "US")
+    )
+      formattedMobile = `+1${formattedMobile}`;
+    else if (
+      formattedMobile.length === 10 &&
+      process.env.DEFAULT_COUNTRY_CODE === "IN"
+    )
+      formattedMobile = `+91${formattedMobile}`;
+    else
+      console.warn(
+        `[AuthService] Cannot reliably determine country code for ${phoneNumber}. Consider requiring E.164 format.`
+      );
+  }
+  return formattedMobile;
+};
+
+// --- Service Functions ---
+
+/** Customer Registration */
 export const registerCustomer = async (
-  data: RegisterInput
+  // Expect the raw data structure, validation happens in controller/middleware
+  data: { fullName: string; email: string; mobile: string; password: string }
 ): Promise<string> => {
   const { fullName, email, mobile, password } = data;
-
   console.log(`[AuthService] Registering customer: ${email}, ${mobile}`);
+
+  // Check existing user
   const existingUser = await Customer.findOne({ $or: [{ email }, { mobile }] });
   if (existingUser) {
-    // Be specific about which field conflicts
     const conflictField =
       existingUser.email === email ? "Email" : "Mobile number";
     console.warn(
       `[AuthService] Registration failed: ${conflictField} already in use.`
     );
-    throw new Error(`${conflictField} already in use.`);
+    throw new Error(`${conflictField} already in use.`); // Let controller handle status code
   }
 
-  const hashedPassword = await bcrypt.hash(password, 10);
+  // Hash password
+  const hashedPassword = await bcrypt.hash(password, SALT_ROUNDS); // Use SALT_ROUNDS
 
-  // Create Stripe Customer first
+  // Create Stripe Customer
   let stripeCustomerId: string | undefined;
   try {
     const stripeCustomer = await stripe.customers.create({
       name: fullName,
       email,
       phone: mobile,
-      // Metadata added later after customer save
     });
     stripeCustomerId = stripeCustomer.id;
     console.log(`[AuthService] Stripe customer created: ${stripeCustomerId}`);
-  } catch (stripeError) {
+  } catch (stripeError: any) {
     console.error("[AuthService] Error creating Stripe customer:", stripeError);
-    // Decide how to handle Stripe errors - fail registration or proceed without Stripe ID?
-    // Let's fail for now:
     throw new Error(
-      `Failed to create payment profile: ${stripeError instanceof Error ? stripeError.message : "Unknown Stripe error"}`
+      `Failed to create payment profile: ${stripeError.message || "Unknown Stripe error"}`
     );
   }
 
-  // Create user in DB
+  // Create customer in DB
   const newCustomerData = {
     fullName,
     email,
     mobile,
     password: hashedPassword,
     stripeCustomerId: stripeCustomerId,
-    verification: false, // Start as unverified
-    // Removed OTP fields
+    verification: false, // Default to false
+    // Ensure default empty strings match model or use undefined
     address: "",
     city: "",
     postalCode: "",
     currentLocation: "",
   };
-  const newCustomer = (await Customer.create(newCustomerData)) as ICustomer;
-  console.log(`[AuthService] Customer created in DB: ${newCustomer._id}`);
+  const newCustomer = await Customer.create(newCustomerData); // No need to cast if types align
+  console.log(`[AuthService] Customer created in DB: ${newCustomer.id}`); // Use .id
 
-  // Update Stripe customer metadata with DB ID
+  // Update Stripe metadata
   try {
     await stripe.customers.update(stripeCustomerId!, {
-      // Use non-null assertion as we check above
-      metadata: { platformUserId: newCustomer._id.toString() },
+      // Use non-null assertion
+      metadata: { platformUserId: newCustomer.id.toString() },
     });
     console.log(`[AuthService] Stripe customer metadata updated.`);
-  } catch (stripeUpdateError) {
+  } catch (stripeUpdateError: any) {
     console.error(
       "[AuthService] Error updating Stripe customer metadata:",
       stripeUpdateError
     );
-    // Log error but don't necessarily fail registration at this point
+    // Log and continue
   }
 
-  return newCustomer._id.toString();
+  return newCustomer.id.toString(); // Use .id
 };
 
-// --- Login Handler (Updated for Twilio Verify) ---
+/** Handle Mobile Login Attempt (incl. initiating verification) */
 export const handleMobileLogin = async (
   mobile: string,
   password: string
 ): Promise<{ verificationRequired: boolean; token?: string }> => {
   console.log(`[AuthService] Login attempt for mobile: ${mobile}`);
-  const user = await Customer.findOne({ mobile });
+  // Fetch user WITH password field selected
+  const user = await Customer.findOne({ mobile }).select("+password");
 
   if (!user) {
     console.warn(
-      `[AuthService] Login failed: Mobile number ${mobile} not registered.`
+      `[AuthService] Login failed: Mobile ${mobile} not registered.`
     );
-    throw new Error("Mobile number not registered");
+    throw new Error("Invalid credentials."); // Generic message
   }
 
+  // User exists, compare password
   const match = await bcrypt.compare(password, user.password);
   if (!match) {
     console.warn(
       `[AuthService] Login failed: Invalid password for mobile ${mobile}.`
     );
-    throw new Error("Invalid password");
+    throw new Error("Invalid credentials."); // Generic message
   }
 
-  // If user is already verified, generate and return token directly
+  // Password matches. Check verification status.
   if (user.verification) {
-    console.log(
-      `[AuthService] User ${user._id} already verified. Generating token.`
-    );
-    const token = generateToken(user._id.toString());
+    console.log(`[AuthService] User ${user.id} verified. Generating token.`);
+    const token = generateToken(user.id.toString()); // Use .id
     return { verificationRequired: false, token };
   }
 
-  // --- User is NOT verified, initiate Twilio Verification ---
+  // --- User Not Verified - Initiate Twilio Verification ---
   console.log(
-    `[AuthService] User ${user._id} not verified. Initiating Twilio verification.`
+    `[AuthService] User ${user.id} not verified. Initiating Twilio verification.`
   );
-
-  // Check if Twilio client was initialized
   if (!twilioClient || !verifyServiceSid) {
-    console.error(
-      "[AuthService] Twilio client or Verify Service SID not available. Check environment variables."
-    );
-    throw new Error(
-      "OTP service is currently unavailable. Please try again later."
-    );
+    console.error("[AuthService] Twilio client/Verify SID missing.");
+    throw new Error("OTP service is currently unavailable [T3].");
   }
 
   try {
-    // Format number for Twilio (needs E.164 format, e.g., +1XXXXXXXXXX, +91XXXXXXXXXX)
-    // Assuming input 'mobile' might or might not have '+'. Add '+' if missing for common cases.
-    // IMPORTANT: This assumes Canadian/US (+1) or Indian (+91) format primarily.
-    // Robust international formatting might need a library like libphonenumber-js.
-    let formattedMobile = mobile.trim();
-    if (!formattedMobile.startsWith("+")) {
-      // Basic assumption - adjust if needed based on how numbers are stored/entered
-      if (
-        formattedMobile.length === 10 &&
-        (process.env.DEFAULT_COUNTRY_CODE === "CA" ||
-          process.env.DEFAULT_COUNTRY_CODE === "US")
-      ) {
-        formattedMobile = `+1${formattedMobile}`;
-      } else if (
-        formattedMobile.length === 10 &&
-        process.env.DEFAULT_COUNTRY_CODE === "IN"
-      ) {
-        formattedMobile = `+91${formattedMobile}`;
-      } else {
-        // Cannot determine country code - might fail
-        console.warn(
-          `[AuthService] Cannot determine country code for mobile ${mobile}. Attempting without explicit '+'`
-        );
-        // Twilio might handle it, or might fail. Consider requiring E.164 format during registration.
-      }
-    }
+    const formattedMobile = formatPhoneNumberForTwilio(user.mobile!); // Use user's stored mobile
     console.log(
       `[AuthService] Sending Twilio verification to: ${formattedMobile}`
     );
-
-    // Send OTP via Twilio Verify
     const verification = await twilioClient.verify.v2
       .services(verifyServiceSid)
-      .verifications.create({ to: formattedMobile, channel: "sms" }); // Use 'sms' channel
-
+      .verifications.create({ to: formattedMobile, channel: "sms" });
     console.log(
-      `[AuthService] Twilio verification status for ${formattedMobile}: ${verification.status}`
+      `[AuthService] Twilio verification status: ${verification.status}`
     );
-    // Twilio handles sending and managing the code. We don't store it.
-
-    // Respond to controller indicating OTP was sent
-    return { verificationRequired: true };
-  } catch (twilioError) {
+    return { verificationRequired: true }; // Inform controller OTP was sent
+  } catch (twilioError: any) {
     console.error(
       `[AuthService] Error sending Twilio verification for ${mobile}:`,
       twilioError
     );
-    // Provide a user-friendly error
+    // Handle specific Twilio errors if needed (like invalid number)
+    if (twilioError?.code === 60200 || twilioError?.code === 21211) {
+      throw new Error("Invalid phone number format for OTP.");
+    }
     throw new Error(
-      `Failed to send OTP. Please check the mobile number or try again later. [${twilioError instanceof Error ? twilioError.message : "Twilio Error"}]`
+      `Failed to send OTP. Please try again later. [${twilioError.message || "Twilio Error"}]`
     );
   }
 };
 
-// --- OTP Verification Handler (Updated for Twilio Verify) ---
+/** Verify OTP (from initial login/signup) and Login */
 export const verifyOTPAndLogin = async (
   mobile: string,
   otp: string
 ): Promise<{ token: string }> => {
   console.log(`[AuthService] Verifying OTP ${otp} for mobile: ${mobile}`);
-
-  // Check if Twilio client was initialized
   if (!twilioClient || !verifyServiceSid) {
-    console.error(
-      "[AuthService] Twilio client or Verify Service SID not available."
+    console.error("[AuthService] Twilio client/Verify SID missing.");
+    throw new Error("OTP service is currently unavailable [T4].");
+  }
+
+  // Find user first to ensure account exists for this number
+  const user = await Customer.findOne({ mobile });
+  if (!user) {
+    console.warn(
+      `[AuthService] Cannot verify OTP, user not found for mobile: ${mobile}`
     );
-    throw new Error("OTP service is currently unavailable.");
+    throw new Error("Invalid mobile number or OTP code."); // Generic error
   }
 
   try {
-    // Format number for Twilio (same logic as sending)
-    let formattedMobile = mobile.trim();
-    if (!formattedMobile.startsWith("+")) {
-      // Basic assumption based on potential default country code
-      if (
-        formattedMobile.length === 10 &&
-        (process.env.DEFAULT_COUNTRY_CODE === "CA" ||
-          process.env.DEFAULT_COUNTRY_CODE === "US")
-      )
-        formattedMobile = `+1${formattedMobile}`;
-      else if (
-        formattedMobile.length === 10 &&
-        process.env.DEFAULT_COUNTRY_CODE === "IN"
-      )
-        formattedMobile = `+91${formattedMobile}`;
-      else
-        console.warn(
-          `[AuthService] Cannot determine country code for OTP check for ${mobile}.`
-        );
-    }
+    const formattedMobile = formatPhoneNumberForTwilio(user.mobile!);
     console.log(
       `[AuthService] Checking Twilio verification for: ${formattedMobile}`
     );
-
-    // Check the OTP with Twilio Verify
     const verificationCheck = await twilioClient.verify.v2
       .services(verifyServiceSid)
       .verificationChecks.create({ to: formattedMobile, code: otp });
-
     console.log(
-      `[AuthService] Twilio verification check status for ${formattedMobile}: ${verificationCheck.status}`
+      `[AuthService] Twilio check status: ${verificationCheck.status}`
     );
 
-    // Check if the verification was successful ('approved')
     if (verificationCheck.status === "approved") {
       console.log(
-        `[AuthService] OTP approved for ${mobile}. Marking user as verified.`
+        `[AuthService] OTP approved for ${mobile}. User ID: ${user.id}`
       );
-
-      // Find user again (ensure they exist)
-      const user = await Customer.findOne({ mobile });
-      if (!user) {
-        // Should not happen if login initiated OTP, but check anyway
-        console.error(
-          `[AuthService] User ${mobile} not found during OTP verification success.`
-        );
-        throw new Error("User not found after successful OTP verification.");
-      }
-
       // Mark user as verified in DB (if not already)
       if (!user.verification) {
         user.verification = true;
         await user.save();
-        console.log(`[AuthService] User ${user._id} marked as verified.`);
+        console.log(`[AuthService] User ${user.id} marked as verified.`);
       }
-
       // Generate JWT
-      const token = generateToken(user._id.toString());
-      console.log(`[AuthService] JWT generated for user ${user._id}.`);
+      const token = generateToken(user.id.toString());
+      console.log(`[AuthService] JWT generated for user ${user.id}.`);
       return { token };
     } else {
-      // Verification failed (pending, canceled, max_attempts_reached)
       console.warn(
-        `[AuthService] OTP verification failed for ${mobile}. Status: ${verificationCheck.status}`
+        `[AuthService] OTP check failed for ${mobile}. Status: ${verificationCheck.status}`
       );
       throw new Error("Invalid or expired OTP code.");
     }
-  } catch (twilioError) {
+  } catch (twilioError: any) {
     console.error(
       `[AuthService] Error checking Twilio verification for ${mobile}:`,
       twilioError
     );
-    // Handle potential Twilio errors (e.g., "VerificationCheck resource not found" if code expired or never sent)
     if (
-      twilioError instanceof Error &&
-      twilioError.message.includes("not found")
+      twilioError?.code === 20404 ||
+      (twilioError instanceof Error &&
+        twilioError.message.includes("not found"))
     ) {
       throw new Error(
         "OTP code not found or expired. Please try logging in again."
       );
     }
     throw new Error(
-      `Failed to verify OTP. [${twilioError instanceof Error ? twilioError.message : "Twilio Error"}]`
+      `Failed to verify OTP. [${twilioError.message || "Twilio Error"}]`
+    );
+  }
+};
+
+// --- Password Reset Functions ---
+
+/** Step 1: Request password reset OTP via Twilio Verify SMS */
+export const requestPasswordResetOtp = async (
+  phoneNumber: string
+): Promise<{ success: boolean; message: string }> => {
+  console.log(
+    `[AuthService] Password reset requested for phone: ${phoneNumber}`
+  );
+  if (!twilioClient || !verifyServiceSid) {
+    console.error(
+      "[AuthService] Twilio client/Verify SID missing for password reset."
+    );
+    throw new Error("Password reset service is temporarily unavailable [T1].");
+  }
+
+  try {
+    // Use CustomerService now
+    const customer = await customerService.findByPhoneNumber(phoneNumber);
+    if (customer) {
+      console.log(
+        `[AuthService] Customer found for password reset request: ${customer.id}`
+      );
+      const formattedMobile = formatPhoneNumberForTwilio(customer.mobile!);
+      console.log(
+        `[AuthService] Sending Twilio verification for password reset to: ${formattedMobile}`
+      );
+      const verification = await twilioClient.verify.v2
+        .services(verifyServiceSid)
+        .verifications.create({ to: formattedMobile, channel: "sms" });
+      console.log(
+        `[AuthService] Twilio verification status for ${formattedMobile}: ${verification.status}`
+      );
+    } else {
+      console.log(
+        `[AuthService] No customer found for phone: ${phoneNumber} during password reset request.`
+      );
+    }
+    return {
+      success: true,
+      message: "If an account exists, an OTP has been sent.",
+    };
+  } catch (error: any) {
+    console.error("[AuthService] Error requesting password reset OTP:", error);
+    if (error?.code === 60200 || error?.code === 21211) {
+      throw new Error("Invalid phone number format provided.");
+    }
+    throw new Error(
+      `Could not send reset code. Please try again later. [${error.message || "SMS Error"}]`
+    );
+  }
+};
+
+/** Step 2: Verify password reset OTP and issue final reset token */
+export const verifyPasswordResetOtp = async (
+  phoneNumber: string,
+  otp: string
+): Promise<{ success: boolean; message: string; resetToken?: string }> => {
+  console.log(
+    `[AuthService] Verifying password reset OTP ${otp} for mobile: ${phoneNumber}`
+  );
+  if (!twilioClient || !verifyServiceSid) {
+    /* ... handle missing Twilio ... */ throw new Error(
+      "Service unavailable [T2]."
+    );
+  }
+
+  const customer = await customerService.findByPhoneNumber(phoneNumber);
+  if (!customer) {
+    /* ... handle not found ... */ throw new Error(
+      "Invalid phone number or OTP."
+    );
+  }
+
+  try {
+    const formattedMobile = formatPhoneNumberForTwilio(customer.mobile!);
+    console.log(
+      `[AuthService] Checking Twilio verification for password reset: ${formattedMobile}`
+    );
+    const verificationCheck = await twilioClient.verify.v2
+      .services(verifyServiceSid)
+      .verificationChecks.create({ to: formattedMobile, code: otp });
+    console.log(
+      `[AuthService] Twilio check status: ${verificationCheck.status}`
+    );
+
+    if (verificationCheck.status === "approved") {
+      console.log(
+        `[AuthService] Pwd reset OTP approved for ${phoneNumber}, User ID: ${customer.id}`
+      );
+      const { plainToken, hashedToken } = await generateSecureToken(); // Use await
+      const tokenExpires = new Date(
+        Date.now() + RESET_TOKEN_EXPIRY_HOURS * 60 * 60 * 1000
+      );
+      // Use CustomerService to set fields, then save
+      customerService.setFinalResetTokenFields(
+        customer,
+        hashedToken,
+        tokenExpires
+      ); // Use await if needed
+      await customer.save();
+      console.log(
+        `[AuthService] Final password reset token saved for user ${customer.id}`
+      );
+      return {
+        success: true,
+        message: "OTP verified.",
+        resetToken: plainToken,
+      };
+    } else {
+      console.warn(
+        `[AuthService] Pwd reset OTP check failed for ${phoneNumber}. Status: ${verificationCheck.status}`
+      );
+      throw new Error("Invalid or expired OTP code.");
+    }
+  } catch (error: any) {
+    console.error(
+      `[AuthService] Error checking Twilio verification for ${phoneNumber}:`,
+      error
+    );
+    if (
+      error?.code === 20404 ||
+      (error instanceof Error && error.message.includes("not found"))
+    ) {
+      throw new Error(
+        "OTP code not found or expired. Please request a new one."
+      );
+    }
+    throw new Error(
+      `Failed to verify OTP. [${error.message || "Twilio Error"}]`
+    );
+  }
+};
+
+/** Step 3: Reset password using the final token */
+export const resetPasswordWithToken = async (
+  phoneNumber: string,
+  resetToken: string,
+  newPasswordClear: string
+): Promise<{ success: boolean; message: string }> => {
+  console.log(
+    `[AuthService] Attempting password reset for phone ${phoneNumber} with token.`
+  );
+  if (!resetToken) throw new Error("Reset token is required.");
+  if (!phoneNumber) throw new Error("Phone number is required.");
+
+  // 1. Find user by phone number
+  const customer = await customerService.findByPhoneNumber(phoneNumber); // Service selects needed fields
+
+  // 2. Validate user and token fields
+  if (
+    !customer ||
+    !customer.passwordResetTokenHash ||
+    !customer.passwordResetTokenExpires
+  ) {
+    console.warn(
+      `[AuthService] No user or valid token found for reset via phone ${phoneNumber}.`
+    );
+    throw new Error(
+      "Password reset link is invalid or has expired (user/token data missing)."
+    );
+  }
+
+  // 3. Check token expiry
+  if (customer.passwordResetTokenExpires < new Date()) {
+    console.log(`[AuthService] Reset token expired for user ${customer.id}.`);
+    // Clear expired token fields
+    customer.passwordResetTokenHash = null;
+    customer.passwordResetTokenExpires = null;
+    await customer.save();
+    throw new Error("Password reset link is invalid or has expired.");
+  }
+
+  // 4. Compare the PLAIN token from request with the STORED HASH
+  const isTokenMatch = await bcrypt.compare(
+    resetToken,
+    customer.passwordResetTokenHash
+  );
+
+  if (!isTokenMatch) {
+    console.warn(
+      `[AuthService] Reset token comparison failed for user ${customer.id}.`
+    );
+    // Security: Optionally clear the token fields even on mismatch?
+    // customer.passwordResetTokenHash = null;
+    // customer.passwordResetTokenExpires = null;
+    // await customer.save();
+    throw new Error(
+      "Password reset link is invalid or has expired (token mismatch)."
+    );
+  }
+
+  // --- Token is VALID ---
+  console.log(
+    `[AuthService] Reset token validated for user ${customer.id}. Updating password.`
+  );
+  try {
+    // Update password (service handles hashing and clearing tokens)
+    await customerService.updatePassword(
+      customer.id.toString(),
+      newPasswordClear
+    );
+    return {
+      success: true,
+      message: "Password has been reset successfully. Please log in.",
+    };
+  } catch (error: any) {
+    console.error(
+      `[AuthService] Failed to update password for user ${customer.id}:`,
+      error
+    );
+    throw new Error(
+      `Failed to update password: ${error.message || "Database error"}`
     );
   }
 };
