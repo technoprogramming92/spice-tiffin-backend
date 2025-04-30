@@ -174,6 +174,7 @@ export const createOrderFromPayment = async (
     // 5. Prepare Full Order Data
     console.log(`[OrderService] Preparing new order data...`);
     const startDate = new Date();
+    startDate.setDate(startDate.getDate() + 1);
     const endDate = new Date(
       startDate.getTime() + deliveryDays * 24 * 60 * 60 * 1000
     );
