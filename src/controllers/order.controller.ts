@@ -2,6 +2,12 @@
 import { Request, Response, NextFunction } from "express";
 import { Order, OrderStatus } from "../models/Order.model.js";
 import mongoose from "mongoose";
+import {
+  getAdminOrderById as getAdminOrderByIdService,
+  updateAdminOrder as updateAdminOrderService,
+  deleteAdminOrder as deleteAdminOrderService,
+  // Import createOrderFromPayment if it's also in the service file now
+} from "../services/order.service.js";
 
 /**
  * @description Fetches the order history for the currently authenticated customer.
@@ -231,5 +237,73 @@ export const getOrderById = async (
     next(fetchError);
     // If not using catchAsync, you might structure the catch differently:
     // res.status(500).json({ success: false, message: `Failed to fetch order: ${error instanceof Error ? error.message : "Unknown error"}` });
+  }
+};
+
+/** GET /admin/orders/:orderId */
+export const getAdminOrderById = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const { orderId } = req.params;
+    // Call the SERVICE function
+    const order = await getAdminOrderByIdService(orderId);
+    // Service throws errors for invalid ID / not found, caught by catchAsync/next
+    res.status(200).json({ success: true, data: order });
+  } catch (error) {
+    next(error); // Pass to error handler
+  }
+};
+
+/** PUT /admin/orders/:orderId */
+export const updateAdminOrder = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const { orderId } = req.params;
+    const updateData = req.body;
+
+    if (
+      !updateData ||
+      typeof updateData !== "object" ||
+      Object.keys(updateData).length === 0
+    ) {
+      res.status(400).json({ success: false, message: "Missing update data." });
+      return;
+    }
+
+    // Call the SERVICE function
+    const updatedOrder = await updateAdminOrderService(orderId, updateData);
+    // Service throws errors for invalid ID / not found / validation errors
+    res.status(200).json({
+      success: true,
+      message: "Order updated successfully.",
+      data: updatedOrder,
+    });
+  } catch (error) {
+    next(error); // Pass to error handler
+  }
+};
+
+/** DELETE /admin/orders/:orderId */
+export const deleteAdminOrder = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const { orderId } = req.params;
+    // Call the SERVICE function
+    await deleteAdminOrderService(orderId); // Service throws errors for invalid ID / not found
+    // Send success response
+    res
+      .status(200)
+      .json({ success: true, message: "Order deleted successfully." });
+  } catch (error) {
+    next(error);
   }
 };

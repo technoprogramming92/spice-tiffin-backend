@@ -253,3 +253,236 @@ export const createOrderFromPayment = async (
     }
   }
 };
+
+/**
+ * Fetches a single order by ID for Admin view, populating related data.
+ * @param orderId The ID of the order to fetch.
+ * @returns The populated Order document or null if not found.
+ * @throws Mongoose errors on invalid ID format during query.
+ */
+export const getAdminOrderById = async (
+  orderId: string
+): Promise<IOrder | null> => {
+  console.log(`[OrderService] Admin fetching order by ID: ${orderId}`);
+  // Validate ID format before querying
+  if (!mongoose.Types.ObjectId.isValid(orderId)) {
+    console.warn(
+      `[OrderService] Invalid ObjectId format for getAdminOrderById: ${orderId}`
+    );
+    // Throw an error that the controller's catchAsync can handle
+    const error = new Error("Invalid Order ID format.");
+    (error as any).statusCode = 400; // Bad Request
+    throw error;
+  }
+
+  const order = await Order.findById(orderId)
+    .populate("customer", "fullName email mobile verification") // Populate fields needed
+    .populate("package", "name type days price")
+    .populate("assignedDriver", "fullName phone status"); // Populate driver
+
+  if (!order) {
+    console.log(`[OrderService] Admin: Order ${orderId} not found.`);
+    // Throw a not found error
+    const error = new Error("Order not found.");
+    (error as any).statusCode = 404; // Not Found
+    throw error;
+  }
+  console.log(`[OrderService] Admin: Found order ${order.orderNumber}`);
+  return order;
+};
+
+/**
+ * Updates an order by ID for Admin. Only specific fields are allowed.
+ * @param orderId The ID of the order to update.
+ * @param updateData An object containing fields to update.
+ * @returns The updated and populated Order document or null if not found.
+ * @throws Error if update fails or validation fails.
+ */
+export const updateAdminOrder = async (
+  orderId: string,
+  updateData: Partial<IOrder>
+): Promise<IOrder | null> => {
+  console.log(
+    `[OrderService] Admin updating order ID: ${orderId} with data:`,
+    updateData
+  );
+  if (!mongoose.Types.ObjectId.isValid(orderId)) {
+    const error = new Error("Invalid Order ID format.");
+    (error as any).statusCode = 400;
+    throw error;
+  }
+
+  const order = await Order.findById(orderId); // Fetch the full document to update
+  if (!order) {
+    const error = new Error("Order not found for update.");
+    (error as any).statusCode = 404;
+    throw error;
+  }
+
+  // Define fields admins ARE allowed to update (based on your previous requirement)
+  const allowedUpdates: Array<keyof IOrder | string> = [
+    // Use string type for nested paths
+    "status",
+    "deliveryStatus",
+    "assignedDriver",
+    "deliverySequence",
+    "proofOfDeliveryUrl",
+    "deliveryAddress", // Allow updating nested address
+    "startDate",
+    "endDate",
+    "packageName",
+    "packagePrice",
+    "deliveryDays",
+    // EXCLUDED: orderNumber, customer, package (ref), paymentDetails, createdAt, updatedAt
+  ];
+
+  let changesMade = false;
+  for (const key of allowedUpdates) {
+    const typedKey = key as keyof IOrder; // Type assertion for direct access
+
+    // Nested Address Update
+    if (
+      typedKey === "deliveryAddress" &&
+      updateData.deliveryAddress &&
+      typeof updateData.deliveryAddress === "object"
+    ) {
+      // Update nested fields individually to avoid overwriting whole object if only partial data sent
+      const currentAddr = order.deliveryAddress;
+      const newAddr = updateData.deliveryAddress;
+      let addressChanged = false;
+      for (const addrKey in newAddr) {
+        if (
+          Object.prototype.hasOwnProperty.call(currentAddr, addrKey) &&
+          currentAddr[addrKey as keyof IDeliveryAddress] !==
+            newAddr[addrKey as keyof IDeliveryAddress]
+        ) {
+          currentAddr[addrKey as keyof IDeliveryAddress] =
+            newAddr[addrKey as keyof IDeliveryAddress];
+          addressChanged = true;
+        }
+      }
+      if (addressChanged) {
+        order.markModified("deliveryAddress"); // Mark nested object as modified
+        changesMade = true;
+      }
+    }
+    // Assigned Driver Update (Handle null or valid ObjectId)
+    else if (typedKey === "assignedDriver") {
+      const newDriverId = updateData.assignedDriver;
+      if (newDriverId === null && order.assignedDriver !== null) {
+        order.assignedDriver = null;
+        changesMade = true;
+      } else if (
+        newDriverId &&
+        typeof newDriverId === "string" &&
+        mongoose.Types.ObjectId.isValid(newDriverId)
+      ) {
+        if (
+          !order.assignedDriver ||
+          order.assignedDriver.toString() !== newDriverId
+        ) {
+          order.assignedDriver = new mongoose.Types.ObjectId(newDriverId);
+          changesMade = true;
+        }
+      } else if (
+        newDriverId &&
+        typeof newDriverId === "object" &&
+        newDriverId._id &&
+        mongoose.Types.ObjectId.isValid(newDriverId._id)
+      ) {
+        // Handle case where an object { _id: '...' } might be sent
+        if (
+          !order.assignedDriver ||
+          order.assignedDriver.toString() !== newDriverId._id.toString()
+        ) {
+          order.assignedDriver = new mongoose.Types.ObjectId(newDriverId._id);
+          changesMade = true;
+        }
+      } else if (newDriverId !== undefined && newDriverId !== null) {
+        console.warn(
+          `[OrderService] Invalid ObjectId received for assignedDriver: ${newDriverId}`
+        );
+        // Optionally throw error or just ignore invalid driver update
+      }
+    }
+    // Other allowed direct fields
+    else if (
+      Object.prototype.hasOwnProperty.call(updateData, typedKey) &&
+      order[typedKey] !== updateData[typedKey]
+    ) {
+      (order as any)[typedKey] = updateData[typedKey]; // Update field
+      changesMade = true;
+    }
+  }
+
+  if (!changesMade) {
+    console.log(
+      `[OrderService] Admin Update: No valid changes detected for order ${orderId}.`
+    );
+    // Re-fetch with population to return consistent data structure
+    return getAdminOrderById(orderId);
+  }
+
+  console.log(
+    `[OrderService] Admin Update: Saving changes for order ${orderId}.`
+  );
+  try {
+    const updatedOrder = await order.save();
+    console.log(
+      `[OrderService] Admin Update: Order ${orderId} saved successfully.`
+    );
+    // Re-fetch with population after saving
+    return getAdminOrderById(updatedOrder._id.toString());
+  } catch (validationError: any) {
+    console.error(
+      `[OrderService] Admin Update: Mongoose validation failed for order ${orderId}:`,
+      validationError
+    );
+    // Throw a more specific error for validation failures
+    const error = new Error(`Update failed: ${validationError.message}`);
+    (error as any).statusCode = 400; // Bad Request
+    throw error;
+  }
+};
+
+/**
+ * Deletes an order by ID (Admin action).
+ * @param orderId The ID of the order to delete.
+ * @returns boolean indicating success (true) or failure/not found (false).
+ * @throws Error on database operation failure.
+ */
+export const deleteAdminOrder = async (orderId: string): Promise<boolean> => {
+  console.log(`[OrderService] Admin deleting order ID: ${orderId}`);
+  if (!mongoose.Types.ObjectId.isValid(orderId)) {
+    const error = new Error("Invalid Order ID format.");
+    (error as any).statusCode = 400;
+    throw error;
+  }
+
+  try {
+    const result = await Order.findByIdAndDelete(orderId);
+
+    if (!result) {
+      console.log(`[OrderService] Admin Delete: Order ${orderId} not found.`);
+      const error = new Error("Order not found for deletion.");
+      (error as any).statusCode = 404;
+      throw error; // Throw error if not found
+    }
+
+    console.log(
+      `[OrderService] Admin Delete: Successfully deleted order ${orderId}.`
+    );
+    // Consider adding side-effect logic here (cancel Stripe etc.) if required
+    return true; // Indicate successful deletion
+  } catch (error) {
+    console.error(
+      `[OrderService] Admin Delete: Error deleting order ${orderId}:`,
+      error
+    );
+    // Re-throw unexpected DB errors
+    if (error instanceof Error && !(error as any).statusCode) {
+      (error as any).statusCode = 500;
+    }
+    throw error;
+  }
+};
