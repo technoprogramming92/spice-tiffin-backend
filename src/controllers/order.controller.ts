@@ -1,6 +1,6 @@
 // controllers/order.controller.ts
 import { Request, Response, NextFunction } from "express";
-import { Order } from "../models/Order.model.js";
+import { Order, OrderStatus } from "../models/Order.model.js";
 import mongoose from "mongoose";
 
 /**
@@ -55,42 +55,98 @@ export const getAllOrders = async (
   next: NextFunction
 ): Promise<void> => {
   try {
-    // TODO: Add pagination later if needed (e.g., using req.query.page and req.query.limit)
-    // const page = parseInt(req.query.page as string) || 1;
-    // const limit = parseInt(req.query.limit as string) || 20;
-    // const skip = (page - 1) * limit;
+    // --- Pagination Parameters ---
+    const page = parseInt(req.query.page as string) || 1; // Default to page 1
+    const limit = parseInt(req.query.limit as string) || 15; // Default to 15 items per page
+    const skip = (page - 1) * limit;
 
-    console.log(`[OrderController] Fetching all orders for Admin Panel...`);
+    // --- Filter Parameters ---
+    const statusFilter = req.query.status as string; // e.g., "Active", "Expired"
+    const searchQuery = req.query.search as string; // Search term
 
-    // Find all orders
-    const orders = await Order.find({}) // Empty filter {} to get all
-      // Populate customer details needed for admin view
-      .populate("customer", "fullName email mobile") // Select fields from Customer
-      // Populate selected package details
-      .populate("package", "name type") // Select fields from Package
-      .sort({ createdAt: -1 }); // Sort by most recent first
-    // .skip(skip) // Add pagination later
-    // .limit(limit);
+    console.log(
+      `[OrderController] Fetching all orders for Admin Panel - Page: ${page}, Limit: ${limit}, Status: ${statusFilter || "All"}, Search: ${searchQuery || "None"}`
+    );
 
-    // Optional: Get total count for pagination info
-    // const totalOrders = await Order.countDocuments({});
+    // --- Build Mongoose Filter Query ---
+    const filterQuery: mongoose.FilterQuery<typeof Order> = {}; // Start with empty filter
 
-    console.log(`[OrderController] Found ${orders.length} total orders.`);
+    // Add status filter if provided and valid
+    if (
+      statusFilter &&
+      Object.values(OrderStatus).includes(statusFilter as OrderStatus)
+    ) {
+      filterQuery.status = statusFilter;
+      console.log(`[OrderController] Filtering by status: ${statusFilter}`);
+    }
 
+    // Add search filter if provided
+    if (searchQuery) {
+      const searchRegex = new RegExp(searchQuery, "i"); // Case-insensitive regex search
+      console.log(`[OrderController] Filtering by search term: ${searchQuery}`);
+      // Search relevant fields on the Order model itself
+      filterQuery.$or = [
+        { orderNumber: { $regex: searchRegex } },
+        { packageName: { $regex: searchRegex } },
+        // Add other direct fields if needed
+        // { 'deliveryAddress.city': { $regex: searchRegex } },
+        // { 'deliveryAddress.postalCode': { $regex: searchRegex } }
+      ];
+      // IMPORTANT: Searching populated fields (like customer name/email) directly
+      // in the main query can be inefficient. For production with large data,
+      // consider:
+      // 1. Denormalizing essential searchable fields (like customer name) onto the Order schema.
+      // 2. Performing a separate search on the Customer collection first to get matching IDs,
+      //    then adding `customer: { $in: [matchingCustomerIds] }` to filterQuery.
+      // For simplicity now, we'll stick to searching Order fields.
+    }
+
+    // --- Execute Queries (Count and Find) ---
+    console.log("[OrderController] Executing count and find queries...");
+    // Use Promise.all for efficiency
+    const [totalOrders, orders] = await Promise.all([
+      Order.countDocuments(filterQuery), // Count documents matching the filters
+      Order.find(filterQuery) // Find documents matching filters with pagination/sort
+        .populate("customer", "fullName email mobile") // Keep population
+        .populate("package", "name type")
+        .sort({ createdAt: -1 }) // Keep sort order
+        .skip(skip)
+        .limit(limit),
+    ]);
+    console.log(
+      `[OrderController] Found ${totalOrders} total matching orders, returning ${orders.length} for page ${page}.`
+    );
+
+    // --- Calculate Pagination Metadata ---
+    const totalPages = Math.ceil(totalOrders / limit);
+
+    // --- Send Response ---
     res.status(200).json({
       success: true,
-      message: "All orders fetched successfully.",
-      count: orders.length, // Current batch count
-      // total: totalOrders, // Add total later for pagination
-      data: orders,
+      message: "Orders fetched successfully for admin.",
+      count: orders.length, // Count for the current page
+      // --- MODIFIED: Add 'data' object containing orders and pagination ---
+      data: {
+        orders: orders,
+        pagination: {
+          totalOrders: totalOrders,
+          totalPages: totalPages,
+          currentPage: page,
+          limit: limit, // Include limit in response
+          // Optional: Calculate hasNextPage/hasPrevPage if needed
+          hasNextPage: page < totalPages,
+          hasPrevPage: page > 1,
+        },
+      },
+      // ------------------------------------------------------------------
     });
   } catch (error) {
     console.error("[OrderController] Error fetching all orders:", error);
     const fetchError = new Error(
-      `Failed to fetch all orders: ${error instanceof Error ? error.message : "Unknown error"}`
+      `Failed to fetch orders: ${error instanceof Error ? error.message : "Unknown error"}`
     );
     (fetchError as any).statusCode = 500;
-    next(fetchError); // Use return next() if preferred
+    next(fetchError);
   }
 };
 
