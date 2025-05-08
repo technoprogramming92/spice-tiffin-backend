@@ -19,6 +19,7 @@ import driverRoutes from "./routes/driver.route.js";
 import assignmentRoutes from "./routes/assignment.route.js";
 import addonRoutes from "./routes/addon.routes.js";
 import addonOrderRoutes from "./routes/addon-order.route.js";
+import operationalDateRoutes from "./routes/operationalDate.routes.js";
 
 const app = express();
 app.disable("etag");
@@ -54,6 +55,7 @@ app.use("/api/v1/webhooks", webhookRoutes);
 app.use("/api/v1/admin/assignments", assignmentRoutes);
 app.use("/api/v1/addons", addonRoutes);
 app.use("/api/v1/addon-orders", addonOrderRoutes);
+app.use("/api/v1/operational-dates", operationalDateRoutes);
 
 // Global Error Handler
 app.use(errorHandler as any);
