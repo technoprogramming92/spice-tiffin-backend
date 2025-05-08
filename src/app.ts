@@ -26,7 +26,7 @@ app.disable("etag");
 
 // Global Middleware
 app.use(helmet());
-//app.use(cors({ origin: "*" }));
+app.use(cors({ origin: "*" }));
 // --- IMPORTANT: Stripe Webhook Raw Body Parser ---
 // This MUST come BEFORE express.json() and be specific to the webhook route.
 app.use(
