@@ -11,42 +11,13 @@ import {
   IDeliveryAddress,
   IPaymentDetails,
 } from "../models/Order.model.js"; // Adjust path
-import { Addon as AddonModel } from "../models/Addon.model.js"; // Ensure Addon model is exported as 'Addon'
+import { Addon as AddonModel, IAddon } from "../models/addon.model.js"; // Ensure Addon model is exported as 'Addon'
 import { geocodeAddress, GeocodeResult } from "../utils/geocode.js"; // Requires this utility file
 import { deliveryDateService } from "./delivery-date.service.js"; // Requires this service file
 import { stripe } from "../utils/stripe.js"; // Requires this Stripe utility file
 
 // Explicit IOrder definition including _id (helps TS inference)
 // Ensure this matches or is compatible with the one in Order.model.ts
-export interface IOrder extends mongoose.Document {
-  _id: Types.ObjectId;
-  orderNumber: string;
-  customer: Types.ObjectId | ICustomer; // Allow for population type
-  package: Types.ObjectId | IPackage; // Allow for population type
-  packageName: string;
-  packagePrice: number;
-  deliveryDays: number;
-  startDate: Date;
-  endDate: Date;
-  status: OrderStatus;
-  deliverySchedule: Date[];
-  deliveryAddress: IDeliveryAddress;
-  paymentDetails: IPaymentDetails;
-  assignedDriver:
-    | Types.ObjectId
-    | null
-    | {
-        _id: Types.ObjectId;
-        fullName?: string;
-        phone?: string;
-        status?: string;
-      };
-  deliveryStatus: DeliveryStatus;
-  deliverySequence: number | null;
-  proofOfDeliveryUrl?: string;
-  createdAt: Date;
-  updatedAt: Date;
-}
 
 // Interface for parameters passed to createOrderFromPayment
 interface CreateOrderParams {
@@ -372,7 +343,7 @@ export const updateAdminOrder = async (
     "packageName",
     "packagePrice",
     "deliveryDays",
-    "deliverySchedule", // Include schedule if needed
+    "deliverySchedule",
   ];
 
   let changesMade = false;
@@ -390,21 +361,16 @@ export const updateAdminOrder = async (
       newValue &&
       typeof newValue === "object"
     ) {
-      const currentAddr = order.deliveryAddress;
       const newAddr = newValue as IDeliveryAddress;
-      let addressChanged = false;
       for (const addrKeyStr in newAddr) {
         const addrKey = addrKeyStr as keyof IDeliveryAddress;
-        if (
-          Object.prototype.hasOwnProperty.call(currentAddr, addrKey) &&
-          currentAddr[addrKey] !== newAddr[addrKey]
-        ) {
-          // Set nested path
+        if (Object.prototype.hasOwnProperty.call(newAddr, addrKey)) {
+          // Set nested path, Mongoose handles marking modified
           order.set(`deliveryAddress.${addrKey}`, newAddr[addrKey]);
-          addressChanged = true;
+          // We assume if the address object is passed, user intended to change something within it
+          changesMade = true; // Mark change if address object was present in input
         }
       }
-      if (addressChanged) changesMade = true; // MarkModified should be handled by .set usually
     }
     // Handle assignedDriver reference update
     else if (typedKey === "assignedDriver") {
@@ -415,21 +381,21 @@ export const updateAdminOrder = async (
         typeof newValue === "string" &&
         mongoose.Types.ObjectId.isValid(newValue)
       ) {
-        driverIdToSet = new mongoose.Types.ObjectId(newValue);
+        driverIdToSet = new Types.ObjectId(newValue);
       } else if (
         typeof newValue === "object" &&
         newValue?._id &&
         mongoose.Types.ObjectId.isValid(newValue._id)
       ) {
-        driverIdToSet = new mongoose.Types.ObjectId(newValue._id);
+        driverIdToSet = new Types.ObjectId(newValue._id);
       } else if (newValue !== undefined) {
         console.warn(`Ignoring invalid assignedDriver value:`, newValue);
-        continue; /* Skip invalid value */
-      }
+        continue;
+      } // Skip invalid value
 
-      // Only set if the value actually changes
+      // Only use .set if the value *actually* changes to mark path modified correctly
       if (String(order.assignedDriver) !== String(driverIdToSet)) {
-        order.set(typedKey, driverIdToSet);
+        order.set(typedKey, driverIdToSet); // Use set
         changesMade = true;
       }
     }
