@@ -1,18 +1,52 @@
 // src/services/order.service.ts (BACKEND)
 
-import mongoose, { Types } from "mongoose"; // Import Types
+import mongoose, { Types } from "mongoose";
 import { Customer, ICustomer } from "../models/Customer.model.js"; // Adjust path
 import { Package, IPackage } from "../models/Package.model.js"; // Adjust path
 import {
   Order,
-  IOrder, // Main Order Interface from model
+  IOrder, // Use the interface defined WITH explicit _id below
   OrderStatus,
   DeliveryStatus,
   IDeliveryAddress,
   IPaymentDetails,
 } from "../models/Order.model.js"; // Adjust path
-import { geocodeAddress, GeocodeResult } from "../utils/geocode.js"; // Import geocode utility
-import { deliveryDateService } from "./delivery-date.service.js"; // Import for scheduling
+import { Addon as AddonModel } from "../models/Addon.model.js"; // Ensure Addon model is exported as 'Addon'
+import { geocodeAddress, GeocodeResult } from "../utils/geocode.js"; // Requires this utility file
+import { deliveryDateService } from "./delivery-date.service.js"; // Requires this service file
+import { stripe } from "../utils/stripe.js"; // Requires this Stripe utility file
+
+// Explicit IOrder definition including _id (helps TS inference)
+// Ensure this matches or is compatible with the one in Order.model.ts
+export interface IOrder extends mongoose.Document {
+  _id: Types.ObjectId;
+  orderNumber: string;
+  customer: Types.ObjectId | ICustomer; // Allow for population type
+  package: Types.ObjectId | IPackage; // Allow for population type
+  packageName: string;
+  packagePrice: number;
+  deliveryDays: number;
+  startDate: Date;
+  endDate: Date;
+  status: OrderStatus;
+  deliverySchedule: Date[];
+  deliveryAddress: IDeliveryAddress;
+  paymentDetails: IPaymentDetails;
+  assignedDriver:
+    | Types.ObjectId
+    | null
+    | {
+        _id: Types.ObjectId;
+        fullName?: string;
+        phone?: string;
+        status?: string;
+      };
+  deliveryStatus: DeliveryStatus;
+  deliverySequence: number | null;
+  proofOfDeliveryUrl?: string;
+  createdAt: Date;
+  updatedAt: Date;
+}
 
 // Interface for parameters passed to createOrderFromPayment
 interface CreateOrderParams {
@@ -34,7 +68,7 @@ function generateOrderNumber(): string {
   const year = now.getFullYear().toString().slice(-2);
   const month = (now.getMonth() + 1).toString().padStart(2, "0");
   const day = now.getDate().toString().padStart(2, "0");
-  const randomPart = Math.random().toString(36).substring(2, 8).toUpperCase(); // Slightly shorter random part
+  const randomPart = Math.random().toString(36).substring(2, 8).toUpperCase();
   return `SBF-${year}${month}${day}-${randomPart}`;
 }
 
@@ -56,7 +90,7 @@ export const createOrderFromPayment = async (
     paymentMethodDetails,
   } = params;
   console.log(
-    `[OrderService] Starting order creation for user: ${userId}, package: ${packageId}, paymentIntent: ${stripePaymentIntentId}`
+    `[OrderService] Starting order creation for user: ${userId}, package: ${packageId}, PI: ${stripePaymentIntentId}`
   );
 
   const session = await mongoose.startSession();
@@ -69,23 +103,34 @@ export const createOrderFromPayment = async (
       Customer.findById(userId).session(session),
       Package.findById(packageId).session(session),
     ]);
-    if (!customer) throw new Error(`Customer not found for ID: ${userId}`);
-    if (!selectedPackageDoc)
-      throw new Error(`Package not found for ID: ${packageId}`);
+    if (!customer) {
+      throw Object.assign(new Error(`Customer not found: ${userId}`), {
+        statusCode: 404,
+      });
+    }
+    if (!selectedPackageDoc) {
+      throw Object.assign(new Error(`Package not found: ${packageId}`), {
+        statusCode: 404,
+      });
+    }
+
     const selectedPackage = selectedPackageDoc.toObject<IPackage>();
     const {
       name: packageName,
       price: packagePrice,
       days: numberOfDeliveries,
-    } = selectedPackage; // Assuming 'days' = number of deliveries
+    } = selectedPackage;
 
     if (typeof numberOfDeliveries !== "number" || numberOfDeliveries <= 0) {
-      throw new Error(
-        `Invalid number of deliveries (${numberOfDeliveries}) found for package ${packageId}.`
+      throw Object.assign(
+        new Error(`Invalid deliveries: ${numberOfDeliveries}`),
+        { statusCode: 400 }
       );
     }
     if (typeof packagePrice !== "number" || typeof packageName !== "string") {
-      throw new Error(`Invalid data type found for package ${packageId}.`);
+      throw Object.assign(new Error(`Invalid package data`), {
+        statusCode: 400,
+      });
     }
     console.log(
       `[OrderService] Customer ${customer.fullName} & Package ${packageName} found.`
@@ -97,9 +142,9 @@ export const createOrderFromPayment = async (
       `[OrderService] Verifying amount. Expected: ${expectedAmountCents}, Paid: ${amountPaid}`
     );
     if (amountPaid !== expectedAmountCents) {
-      throw new Error(
-        `Payment amount mismatch. Expected ${expectedAmountCents}, received ${amountPaid}`
-      );
+      throw Object.assign(new Error(`Payment amount mismatch`), {
+        statusCode: 400,
+      });
     }
 
     // 3. Check for existing order (Idempotency)
@@ -117,6 +162,7 @@ export const createOrderFromPayment = async (
       session.endSession();
       return existingOrder;
     }
+    console.log(`[OrderService] No existing order found.`);
 
     // 4. Prepare Address (with Geocoding)
     const deliveryAddress: IDeliveryAddress = {
@@ -124,9 +170,12 @@ export const createOrderFromPayment = async (
       city: customer.city,
       postalCode: customer.postalCode,
       currentLocation: customer.currentLocation,
+      latitude: undefined,
+      longitude: undefined,
     };
     try {
       console.log(`[OrderService] Geocoding delivery address...`);
+      // Assumes geocodeAddress utility exists and is imported
       const coordinates: GeocodeResult | null =
         await geocodeAddress(deliveryAddress);
       if (coordinates) {
@@ -139,7 +188,7 @@ export const createOrderFromPayment = async (
         );
       }
     } catch (geoError) {
-      console.error(`[OrderService] Geocoding threw error:`, geoError);
+      console.error(`[OrderService] Geocoding error:`, geoError);
       // Continue without coordinates
     }
 
@@ -163,16 +212,18 @@ export const createOrderFromPayment = async (
     const firstPossibleDeliveryDay = new Date(orderStartDate);
     firstPossibleDeliveryDay.setUTCDate(
       firstPossibleDeliveryDay.getUTCDate() + 1
-    ); // Start checking from tomorrow UTC
+    );
     firstPossibleDeliveryDay.setUTCHours(0, 0, 0, 0);
 
+    // Assumes deliveryDateService exists and is imported
     const calculatedDeliveryDates = await deliveryDateService.getAvailableDates(
       firstPossibleDeliveryDay,
       numberOfDeliveries
     );
     if (calculatedDeliveryDates.length < numberOfDeliveries) {
-      throw new Error(
-        `Unable to schedule all ${numberOfDeliveries} deliveries based on current availability.`
+      throw Object.assign(
+        new Error(`Unable to schedule all ${numberOfDeliveries} deliveries.`),
+        { statusCode: 400 }
       );
     }
     const calculatedEndDate =
@@ -184,20 +235,24 @@ export const createOrderFromPayment = async (
 
     // 7. Prepare Full Order Data
     const orderNumber = generateOrderNumber();
-    const newOrderData = {
+    const newOrderData: Partial<IOrder> = {
+      // Use Partial<IOrder> for safety
       orderNumber,
       customer: customer._id,
       package: selectedPackageDoc._id,
       packageName,
       packagePrice,
-      deliveryDays: numberOfDeliveries, // Store intended number of deliveries
-      startDate: orderStartDate, // Date order was placed
-      endDate: calculatedEndDate, // Date of last scheduled delivery
-      status: OrderStatus.ACTIVE, // Start as Active
-      deliverySchedule: calculatedDeliveryDates, // Store the schedule
+      deliveryDays: numberOfDeliveries,
+      startDate: orderStartDate,
+      endDate: calculatedEndDate,
+      status: OrderStatus.ACTIVE,
+      deliverySchedule: calculatedDeliveryDates,
       deliveryAddress,
       paymentDetails,
-      deliveryStatus: DeliveryStatus.SCHEDULED, // Start as Scheduled since dates are set
+      deliveryStatus: DeliveryStatus.SCHEDULED, // Default after schedule calculation
+      // assignedDriver: null, // Defaulted by schema
+      // deliverySequence: null, // Defaulted by schema
+      // proofOfDeliveryUrl: undefined, // Defaulted by schema
     };
 
     // 8. Create the Order document
@@ -207,7 +262,7 @@ export const createOrderFromPayment = async (
       throw new Error("Database failed to create order document.");
     }
     const newOrder = createdOrders[0];
-    console.log(`[OrderService] Order document created: ${newOrder.id}`); // Use .id here
+    console.log(`[OrderService] Order document created: ${newOrder.id}`);
 
     // 9. Commit transaction
     await session.commitTransaction();
@@ -221,24 +276,29 @@ export const createOrderFromPayment = async (
     );
     if (session.inTransaction()) {
       await session.abortTransaction();
+      console.log(`[OrderService] Transaction aborted due to error.`);
     }
-    session.endSession();
-    // Re-throw classified error
+    // Ensure session is always ended, even if abort fails
+    await session
+      .endSession()
+      .catch((sessErr) => console.error("Error ending session:", sessErr));
+
+    // Ensure we always throw an Error object with a status code if possible
+    let processedError: Error;
     if (error instanceof Error) {
-      if (!(error as any).statusCode) {
-        (error as any).statusCode = 500;
-      }
-      throw error;
+      processedError = error;
+      (processedError as any).statusCode = (error as any).statusCode || 500; // Add default status if missing
     } else {
-      const unknownError = new Error("Unknown error during order creation.");
-      (unknownError as any).statusCode = 500;
-      throw unknownError;
+      processedError = new Error("Unknown error during order creation.");
+      (processedError as any).statusCode = 500;
     }
+    throw processedError; // Re-throw the processed error
   }
 };
 
 /**
  * Fetches a single order by ID for Admin view, populating related data.
+ * Uses .lean() for performance.
  */
 export const getAdminOrderById = async (
   orderId: string
@@ -251,10 +311,10 @@ export const getAdminOrderById = async (
   }
 
   const order = await Order.findById(orderId)
-    .populate("customer", "fullName email mobile verification")
-    .populate("package", "name type days price")
-    .populate("assignedDriver", "fullName phone status")
-    .lean(); // Using lean() here for performance, return type is now plain object
+    .populate("customer", "fullName email mobile verification") // Specify desired fields
+    .populate("package", "name type days price") // Specify desired fields
+    .populate("assignedDriver", "fullName phone status") // Specify desired fields
+    .lean(); // Return plain JS object
 
   if (!order) {
     const error = new Error("Order not found.");
@@ -262,11 +322,8 @@ export const getAdminOrderById = async (
     throw error;
   }
   console.log(`[OrderService] Admin: Found order ${order.orderNumber}`);
-  // Note: Since we use .lean(), the return type is technically not IOrder (Mongoose Document)
-  // but a plain object matching its structure. Define a specific lean type if needed,
-  // or cast carefully in the controller/adjust frontend type.
-  // For simplicity, we'll rely on structural compatibility.
-  return order as IOrder; // Cast for now, ensure IOrder matches lean structure
+  // Cast is okay here if IOrder structure matches lean output, which it should if defined correctly
+  return order as IOrder;
 };
 
 /**
@@ -283,7 +340,7 @@ export const updateAdminOrder = async (
     throw error;
   }
 
-  // Fetch the actual Mongoose document for update
+  // Fetch the full Mongoose Document to use instance methods like .set() and .save()
   const order = await Order.findById(orderId);
   if (!order) {
     const error = new Error("Order not found for update.");
@@ -291,6 +348,7 @@ export const updateAdminOrder = async (
     throw error;
   }
 
+  // Define fields admins ARE allowed to update
   const allowedUpdates: Array<
     keyof Omit<
       IOrder,
@@ -314,47 +372,44 @@ export const updateAdminOrder = async (
     "packageName",
     "packagePrice",
     "deliveryDays",
-    "deliverySchedule", // Allow editing schedule? Risky without recalculation. Let's keep it for now but comment out direct update.
+    "deliverySchedule", // Include schedule if needed
   ];
 
   let changesMade = false;
   for (const key of allowedUpdates) {
-    const typedKey = key as keyof IOrder; // Use the key directly
+    const typedKey = key as keyof IOrder;
 
-    // Skip if updateData doesn't provide this key
+    // Check if the key exists in the incoming update data
     if (!Object.prototype.hasOwnProperty.call(updateData, typedKey)) continue;
 
     const newValue = updateData[typedKey];
 
-    // Handle nested deliveryAddress update
+    // Handle nested deliveryAddress object update using .set() with path
     if (
       typedKey === "deliveryAddress" &&
       newValue &&
       typeof newValue === "object"
     ) {
-      let addressChanged = false;
       const currentAddr = order.deliveryAddress;
-      const newAddr = newValue as IDeliveryAddress; // Assume structure matches
-      for (const addrKey in newAddr) {
+      const newAddr = newValue as IDeliveryAddress;
+      let addressChanged = false;
+      for (const addrKeyStr in newAddr) {
+        const addrKey = addrKeyStr as keyof IDeliveryAddress;
         if (
           Object.prototype.hasOwnProperty.call(currentAddr, addrKey) &&
-          currentAddr[addrKey as keyof IDeliveryAddress] !==
-            newAddr[addrKey as keyof IDeliveryAddress]
+          currentAddr[addrKey] !== newAddr[addrKey]
         ) {
-          currentAddr[addrKey as keyof IDeliveryAddress] =
-            newAddr[addrKey as keyof IDeliveryAddress];
+          // Set nested path
+          order.set(`deliveryAddress.${addrKey}`, newAddr[addrKey]);
           addressChanged = true;
         }
       }
-      if (addressChanged) {
-        order.markModified("deliveryAddress");
-        changesMade = true;
-      }
+      if (addressChanged) changesMade = true; // MarkModified should be handled by .set usually
     }
-    // Handle assignedDriver update (ObjectId or null)
+    // Handle assignedDriver reference update
     else if (typedKey === "assignedDriver") {
       let driverIdToSet: Types.ObjectId | null = null;
-      if (newValue === null) {
+      if (newValue === null || newValue === "") {
         driverIdToSet = null;
       } else if (
         typeof newValue === "string" &&
@@ -368,61 +423,22 @@ export const updateAdminOrder = async (
       ) {
         driverIdToSet = new mongoose.Types.ObjectId(newValue._id);
       } else if (newValue !== undefined) {
-        console.warn(
-          `[OrderService] Ignoring invalid assignedDriver value:`,
-          newValue
-        );
+        console.warn(`Ignoring invalid assignedDriver value:`, newValue);
+        continue; /* Skip invalid value */
       }
-      // Check if value actually changed
+
+      // Only set if the value actually changes
       if (String(order.assignedDriver) !== String(driverIdToSet)) {
-        // Compare string/null representations
-        order.assignedDriver = driverIdToSet;
+        order.set(typedKey, driverIdToSet);
         changesMade = true;
       }
     }
-    // --- Handle deliverySchedule Update (Example - needs validation) ---
-    // else if (typedKey === 'deliverySchedule' && Array.isArray(newValue)) {
-    //      // WARNING: Requires extensive validation to ensure dates are valid,
-    //      // ordered, match deliveryDays count, within endDate etc.
-    //      // Simple assignment shown, but proper logic is needed.
-    //      if (JSON.stringify(order.deliverySchedule) !== JSON.stringify(newValue)) {
-    //          order.deliverySchedule = newValue.map(d => new Date(d)); // Ensure they are Date objects
-    //          order.markModified('deliverySchedule');
-    //          changesMade = true;
-    //      }
-    // }
-    // --- End deliverySchedule ---
-    // Handle other direct fields
-    else if (typedKey !== "deliveryAddress" && order[typedKey] !== newValue) {
-      // Ensure dates are handled correctly if sent as strings
-      if (
-        (typedKey === "startDate" || typedKey === "endDate") &&
-        typeof newValue === "string"
-      ) {
-        const newDate = new Date(newValue);
-        if (
-          !isNaN(newDate.getTime()) &&
-          order[typedKey]?.getTime() !== newDate.getTime()
-        ) {
-          order[typedKey] = newDate;
-          changesMade = true;
-        }
-      } else if (typedKey !== "startDate" && typedKey !== "endDate") {
-        // Direct assignment for status, deliveryStatus, package details etc.
-        // Type checking might be needed for number fields like deliveryDays/packagePrice
-        if (
-          typedKey === "packagePrice" ||
-          typedKey === "deliveryDays" ||
-          typedKey === "deliverySequence"
-        ) {
-          if (typeof newValue === "number" && order[typedKey] !== newValue) {
-            order[typedKey] = newValue;
-            changesMade = true;
-          }
-        } else {
-          order[typedKey] = newValue;
-          changesMade = true;
-        }
+    // Handle other allowed fields using .set()
+    else if (typedKey !== "deliveryAddress" && typedKey !== "assignedDriver") {
+      // Use .get() for comparison and .set() for update
+      if (order.get(typedKey) !== newValue) {
+        order.set(typedKey, newValue);
+        changesMade = true;
       }
     }
   }
@@ -431,8 +447,7 @@ export const updateAdminOrder = async (
     console.log(
       `[OrderService] Admin Update: No valid changes detected for order ${orderId}.`
     );
-    // Fetch again to return consistent populated data
-    return getAdminOrderById(orderId);
+    return getAdminOrderById(orderId); // Re-fetch populated lean version
   }
 
   console.log(
@@ -443,8 +458,7 @@ export const updateAdminOrder = async (
     console.log(
       `[OrderService] Admin Update: Order ${orderId} saved successfully.`
     );
-    // Re-fetch with population after saving
-    return getAdminOrderById(orderId); // Use the function defined above
+    return getAdminOrderById(orderId); // Re-fetch populated lean version
   } catch (validationError: any) {
     console.error(
       `[OrderService] Admin Update: Mongoose validation failed:`,
@@ -477,8 +491,8 @@ export const deleteAdminOrder = async (orderId: string): Promise<boolean> => {
     console.log(
       `[OrderService] Admin Delete: Successfully deleted order ${orderId}.`
     );
-    // !! IMPORTANT: Consider side effects (Stripe, AddonOrders, Notifications) !!
-    return true;
+    // !! IMPORTANT: Consider side effects (Stripe, AddonOrders, Notifications etc.) !!
+    return true; // Indicate successful deletion
   } catch (error) {
     console.error(
       `[OrderService] Admin Delete: Error deleting order ${orderId}:`,
@@ -487,6 +501,6 @@ export const deleteAdminOrder = async (orderId: string): Promise<boolean> => {
     if (error instanceof Error && !(error as any).statusCode) {
       (error as any).statusCode = 500;
     }
-    throw error;
+    throw error; // Re-throw unexpected DB errors
   }
 };
