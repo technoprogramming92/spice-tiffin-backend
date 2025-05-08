@@ -210,7 +210,7 @@ export const createOrderFromPayment = async (
       // Use Partial<IOrder> for safety
       orderNumber,
       customer: customer._id,
-      package: selectedPackageDoc._id,
+      package: selectedPackageDoc.id,
       packageName,
       packagePrice,
       deliveryDays: numberOfDeliveries,
@@ -311,8 +311,7 @@ export const updateAdminOrder = async (
     throw error;
   }
 
-  // Fetch the full Mongoose Document to use instance methods like .set() and .save()
-  const order = await Order.findById(orderId);
+  const order = await Order.findById(orderId); // Fetch full Mongoose Document
   if (!order) {
     const error = new Error("Order not found for update.");
     (error as any).statusCode = 404;
@@ -320,18 +319,8 @@ export const updateAdminOrder = async (
   }
 
   // Define fields admins ARE allowed to update
-  const allowedUpdates: Array<
-    keyof Omit<
-      IOrder,
-      | "_id"
-      | "createdAt"
-      | "updatedAt"
-      | "customer"
-      | "package"
-      | "paymentDetails"
-      | "orderNumber"
-    >
-  > = [
+  // Using a Set for efficient checking
+  const allowedUpdateKeys = new Set<string>([
     "status",
     "deliveryStatus",
     "assignedDriver",
@@ -344,83 +333,102 @@ export const updateAdminOrder = async (
     "packagePrice",
     "deliveryDays",
     "deliverySchedule",
-  ];
+  ]);
 
   let changesMade = false;
-  for (const key of allowedUpdates) {
-    const typedKey = key as keyof IOrder;
 
-    // Check if the key exists in the incoming update data
-    if (!Object.prototype.hasOwnProperty.call(updateData, typedKey)) continue;
-
-    const newValue = updateData[typedKey];
-
-    // Handle nested deliveryAddress object update using .set() with path
+  // --- MODIFIED: Iterate over keys in updateData ---
+  for (const key in updateData) {
+    // Ensure it's an own property and it's in our allowed list
     if (
-      typedKey === "deliveryAddress" &&
-      newValue &&
-      typeof newValue === "object"
+      Object.prototype.hasOwnProperty.call(updateData, key) &&
+      allowedUpdateKeys.has(key)
     ) {
-      const newAddr = newValue as IDeliveryAddress;
-      for (const addrKeyStr in newAddr) {
-        const addrKey = addrKeyStr as keyof IDeliveryAddress;
-        if (Object.prototype.hasOwnProperty.call(newAddr, addrKey)) {
-          // Set nested path, Mongoose handles marking modified
-          order.set(`deliveryAddress.${addrKey}`, newAddr[addrKey]);
-          // We assume if the address object is passed, user intended to change something within it
-          changesMade = true; // Mark change if address object was present in input
+      const typedKey = key as keyof IOrder; // We know key is allowed now
+      const newValue = updateData[typedKey];
+
+      // Use Mongoose .get() for reliable comparison of current value
+      const currentValue = order.get(typedKey);
+
+      // --- Handle specific types / nested objects before generic .set ---
+
+      // Nested deliveryAddress update
+      if (
+        typedKey === "deliveryAddress" &&
+        newValue &&
+        typeof newValue === "object"
+      ) {
+        let addressChanged = false;
+        const currentAddr = order.deliveryAddress; // Direct access okay here
+        const newAddr = newValue as IDeliveryAddress;
+        for (const addrKeyStr in newAddr) {
+          const addrKey = addrKeyStr as keyof IDeliveryAddress;
+          if (
+            Object.prototype.hasOwnProperty.call(currentAddr, addrKey) &&
+            Object.prototype.hasOwnProperty.call(newAddr, addrKey) && // Ensure newAddr also has the key
+            currentAddr[addrKey] !== newAddr[addrKey]
+          ) {
+            order.set(`deliveryAddress.${addrKey}`, newAddr[addrKey]);
+            addressChanged = true;
+          }
+        }
+        if (addressChanged) changesMade = true;
+      }
+      // Assigned Driver update (ObjectId or null)
+      else if (typedKey === "assignedDriver") {
+        let driverIdToSet: Types.ObjectId | null = null;
+        if (newValue === null || newValue === "") {
+          driverIdToSet = null;
+        } else if (
+          typeof newValue === "string" &&
+          mongoose.Types.ObjectId.isValid(newValue)
+        ) {
+          driverIdToSet = new Types.ObjectId(newValue);
+        } else if (
+          typeof newValue === "object" &&
+          newValue?._id &&
+          mongoose.Types.ObjectId.isValid(newValue._id)
+        ) {
+          driverIdToSet = new Types.ObjectId(newValue._id);
+        } else if (newValue !== undefined) {
+          console.warn(`Ignoring invalid assignedDriver value:`, newValue);
+          continue;
+        } // Skip invalid
+
+        // Only set if different (compare as strings/null)
+        if (String(order.assignedDriver) !== String(driverIdToSet)) {
+          // Use direct assignment for refs sometimes works better with TS
+          order.assignedDriver = driverIdToSet;
+          changesMade = true;
         }
       }
-    }
-    // Handle assignedDriver reference update
-    else if (typedKey === "assignedDriver") {
-      let driverIdToSet: Types.ObjectId | null = null;
-      if (newValue === null || newValue === "") {
-        driverIdToSet = null;
-      } else if (
-        typeof newValue === "string" &&
-        mongoose.Types.ObjectId.isValid(newValue)
-      ) {
-        driverIdToSet = new Types.ObjectId(newValue);
-      } else if (
-        typeof newValue === "object" &&
-        newValue?._id &&
-        mongoose.Types.ObjectId.isValid(newValue._id)
-      ) {
-        driverIdToSet = new Types.ObjectId(newValue._id);
-      } else if (newValue !== undefined) {
-        console.warn(`Ignoring invalid assignedDriver value:`, newValue);
-        continue;
-      } // Skip invalid value
-
-      // Only use .set if the value *actually* changes to mark path modified correctly
-      if (String(order.assignedDriver) !== String(driverIdToSet)) {
-        order.set(typedKey, driverIdToSet); // Use set
+      // --- FIX: Use Mongoose .set() for other allowed fields ---
+      // Compare first to ensure a change occurred before setting
+      else if (currentValue !== newValue) {
+        order.set(typedKey, newValue); // Use Mongoose .set()
         changesMade = true;
       }
-    }
-    // Handle other allowed fields using .set()
-    else if (typedKey !== "deliveryAddress" && typedKey !== "assignedDriver") {
-      // Use .get() for comparison and .set() for update
-      if (order.get(typedKey) !== newValue) {
-        order.set(typedKey, newValue);
-        changesMade = true;
-      }
+    } else if (Object.prototype.hasOwnProperty.call(updateData, key)) {
+      // Log if a key was provided in updateData but isn't in allowedUpdateKeys
+      console.warn(
+        `[OrderService] Update blocked for non-allowed field: ${key}`
+      );
     }
   }
+  // --- End of Loop ---
 
   if (!changesMade) {
     console.log(
-      `[OrderService] Admin Update: No valid changes detected for order ${orderId}.`
+      `[OrderService] Admin Update: No valid changes applied for order ${orderId}.`
     );
     return getAdminOrderById(orderId); // Re-fetch populated lean version
   }
 
   console.log(
-    `[OrderService] Admin Update: Saving changes for order ${orderId}.`
+    `[OrderService] Admin Update: Saving detected changes for order ${orderId}.`
   );
   try {
-    await order.save(); // Run validators on save
+    await order.save(); // Run validators and save only modified paths
     console.log(
       `[OrderService] Admin Update: Order ${orderId} saved successfully.`
     );
