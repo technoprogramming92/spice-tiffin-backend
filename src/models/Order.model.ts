@@ -21,7 +21,8 @@ export enum DeliveryStatus {
   OUT_FOR_DELIVERY = "Out for Delivery",
   DELIVERED = "Delivered",
   FAILED = "Failed",
-  CANCELLED = "Cancelled", // Can represent cancellation during delivery phase
+  CANCELLED = "Cancelled",
+  SCHEDULED = "SCHEDULED", // Can represent cancellation during delivery phase
 }
 
 /**
@@ -67,7 +68,7 @@ export interface IOrder extends Document {
   startDate: Date;
   endDate: Date;
   status: OrderStatus; // Use the OrderStatus enum
-
+  deliverySchedule: Date[];
   // Sub-documents
   deliveryAddress: IDeliveryAddress;
   paymentDetails: IPaymentDetails; // Use the IPaymentDetails interface
@@ -144,6 +145,8 @@ const orderSchema = new Schema<IOrder, IOrderModel>(
       default: OrderStatus.ACTIVE,
       index: true,
     },
+
+    deliverySchedule: { type: [Date], default: [] },
 
     // Sub-documents using defined schemas
     deliveryAddress: { type: deliveryAddressSchema, required: true },
