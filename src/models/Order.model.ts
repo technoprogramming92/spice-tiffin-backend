@@ -8,6 +8,17 @@ import { IPackage } from "./Package.model.js";
 /**
  * @description Enum for the overall order/subscription status.
  */
+
+export enum DeliveryStatus {
+  SCHEDULED = "Scheduled", // All deliveries are planned
+  IN_PROGRESS = "In Progress", // First delivery made, or currently out for a delivery
+  PARTIALLY_DELIVERED = "Partially Delivered", // Some but not all deliveries completed
+  COMPLETED = "Completed", // All scheduled deliveries made
+  ON_HOLD = "On Hold", // Delivery paused by admin/customer
+  ISSUE = "Issue", // Problem with delivery
+  CANCELLED = "Cancelled", // Order's deliveries are cancelled
+}
+
 export enum OrderStatus {
   ACTIVE = "Active",
   EXPIRED = "Expired", // When endDate passes or deliveries are implicitly complete
@@ -22,7 +33,7 @@ export interface IDeliveryAddress {
   address?: string;
   city?: string;
   postalCode?: string;
-  currentLocation?: string; // Preserved if needed
+  currentLocation?: string;
   latitude?: number;
   longitude?: number;
 }
@@ -62,6 +73,8 @@ export interface IOrder extends Document {
 
   // Overall Order Status
   status: OrderStatus;
+
+  deliveryStatus: DeliveryStatus;
 
   // Delivery Execution Info (Managed by Admin)
   assignedDriver: Types.ObjectId | null; // Ref to Driver/User model
@@ -123,11 +136,9 @@ const orderSchema = new Schema<IOrder, IOrderModel>(
       index: true,
     },
     package: { type: Schema.Types.ObjectId, ref: "Package", required: true },
-
-    // Denormalized Package Info
     packageName: { type: String, required: true },
-    packagePrice: { type: Number, required: true }, // Store in cents
-    deliveryDays: { type: Number, required: true, min: 1 }, // Number of deliveries
+    packagePrice: { type: Number, required: true },
+    deliveryDays: { type: Number, required: true, min: 1 },
 
     // Scheduling
     startDate: { type: Date, required: true, index: true }, // First actual delivery date
@@ -140,6 +151,14 @@ const orderSchema = new Schema<IOrder, IOrderModel>(
       required: true,
       enum: Object.values(OrderStatus),
       default: OrderStatus.ACTIVE,
+      index: true,
+    },
+
+    deliveryStatus: {
+      type: String,
+      required: true,
+      enum: Object.values(DeliveryStatus),
+      default: DeliveryStatus.SCHEDULED, // Default when order is created and schedule is set
       index: true,
     },
 

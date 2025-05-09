@@ -236,6 +236,7 @@ export const createOrderFromPayment = async (
       endDate: calculatedEndDate,
       deliverySchedule: calculatedDeliveryDates,
       status: OrderStatus.ACTIVE,
+
       assignedDriver: null, // Defaulted
       deliveryAddress,
       paymentDetails,
