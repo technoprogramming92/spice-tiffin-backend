@@ -1,54 +1,41 @@
 // src/models/Order.model.ts
 
 import mongoose, { Schema, Document, Model, Types } from "mongoose";
+// Assuming Customer and Package models/interfaces are imported correctly
+import { ICustomer } from "./Customer.model.js";
+import { IPackage } from "./Package.model.js";
 
 /**
- * @description Enum for the original order status (Active, Expired, Cancelled).
- * This is exported because other backend files (like jobs) might use it.
+ * @description Enum for the overall order/subscription status.
  */
 export enum OrderStatus {
   ACTIVE = "Active",
-  EXPIRED = "Expired",
-  CANCELLED = "Cancelled",
+  EXPIRED = "Expired", // When endDate passes or deliveries are implicitly complete
+  CANCELLED = "Cancelled", // Manually cancelled by admin or due to payment failure etc.
 }
 
 /**
- * @description Enum for the detailed delivery lifecycle status.
- */
-export enum DeliveryStatus {
-  PENDING_ASSIGNMENT = "Pending Assignment",
-  ASSIGNED = "Assigned",
-  OUT_FOR_DELIVERY = "Out for Delivery",
-  DELIVERED = "Delivered",
-  FAILED = "Failed",
-  CANCELLED = "Cancelled",
-  SCHEDULED = "SCHEDULED", // Can represent cancellation during delivery phase
-}
-
-/**
- * @description Interface for the Delivery Address sub-document within an Order.
- * Includes geocoordinates for mapping.
+ * @description Interface for the Delivery Address sub-document.
+ * Includes geocoordinates obtained during order creation.
  */
 export interface IDeliveryAddress {
   address?: string;
   city?: string;
   postalCode?: string;
-  currentLocation?: string; // Optional field from previous schema
-  latitude?: number; // For mapping & routing
-  longitude?: number; // For mapping & routing
+  currentLocation?: string; // Preserved if needed
+  latitude?: number;
+  longitude?: number;
 }
 
 /**
- * @description Interface for the Payment Details sub-document within an Order.
- * Based on the example document provided.
+ * @description Interface for the Payment Details sub-document.
  */
 export interface IPaymentDetails {
   stripePaymentIntentId: string;
   stripeCustomerId: string;
-  amountPaid: number; // Assumed to be in cents
-  currency: string; // e.g., 'cad'
-  paymentDate?: Date; // Optional, added for clarity
-  // Optional fields based on Stripe details (if captured)
+  amountPaid: number; // In cents
+  currency: string;
+  paymentDate?: Date;
   paymentMethodType?: string;
   cardBrand?: string;
   cardLast4?: string;
@@ -59,28 +46,32 @@ export interface IPaymentDetails {
  */
 export interface IOrder extends Document {
   // Core Order Info
-  orderNumber: string;
-  customer: Types.ObjectId; // Ref to Customer
-  package: Types.ObjectId; // Ref to Package
-  packageName: string; // Denormalized from Package
-  packagePrice: number; // Denormalized from Package
-  deliveryDays: number; // Denormalized from Package
-  startDate: Date;
-  endDate: Date;
-  status: OrderStatus; // Use the OrderStatus enum
-  deliverySchedule: Date[];
+  orderNumber: string; // Unique, generated order number
+  customer: Types.ObjectId; // Ref to Customer model
+  package: Types.ObjectId; // Ref to Package model
+
+  // Denormalized Package Info (at time of order)
+  packageName: string;
+  packagePrice: number; // Price in cents at time of order
+  deliveryDays: number; // Total number of deliveries expected for this package
+
+  // Delivery Scheduling & Duration
+  startDate: Date; // Date of the FIRST actual delivery (UTC Midnight)
+  endDate: Date; // Date of the LAST actual delivery (UTC Midnight)
+  deliverySchedule: Date[]; // Array containing all scheduled delivery dates (UTC Midnight)
+
+  // Overall Order Status
+  status: OrderStatus;
+
+  // Delivery Execution Info (Managed by Admin)
+  assignedDriver: Types.ObjectId | null; // Ref to Driver/User model
+
   // Sub-documents
-  deliveryAddress: IDeliveryAddress;
-  paymentDetails: IPaymentDetails; // Use the IPaymentDetails interface
+  deliveryAddress: IDeliveryAddress; // Customer's address at time of order
+  paymentDetails: IPaymentDetails; // Payment info for this order
 
-  // Delivery Management Fields
-  assignedDriver: Types.ObjectId | null; // Ref to Driver, null if unassigned
-  deliveryStatus: DeliveryStatus; // Use the DeliveryStatus enum
-  deliverySequence: number | null; // Sequence in optimized route
-  proofOfDeliveryUrl?: string; // URL of uploaded proof image
-
-  // Timestamps (added by schema option)
-  createdAt: Date;
+  // Timestamps
+  createdAt: Date; // Order placement/creation time
   updatedAt: Date;
 }
 
@@ -89,7 +80,6 @@ export interface IOrderModel extends Model<IOrder> {}
 
 // --- Mongoose Schema Definition ---
 
-// Define sub-schemas first for better organization
 const deliveryAddressSchema = new Schema<IDeliveryAddress>(
   {
     address: { type: String },
@@ -99,8 +89,8 @@ const deliveryAddressSchema = new Schema<IDeliveryAddress>(
     latitude: { type: Number },
     longitude: { type: Number },
   },
-  { _id: false }
-); // No separate _id for sub-documents unless needed
+  { _id: false } // No separate _id
+);
 
 const paymentDetailsSchema = new Schema<IPaymentDetails>(
   {
@@ -109,19 +99,19 @@ const paymentDetailsSchema = new Schema<IPaymentDetails>(
       required: true,
       unique: true,
       index: true,
-    }, // Index this for idempotency checks
+    },
     stripeCustomerId: { type: String, required: true, index: true },
     amountPaid: { type: Number, required: true }, // Store in cents
     currency: { type: String, required: true },
-    paymentDate: { type: Date, default: Date.now }, // Default payment date to now
+    paymentDate: { type: Date, default: Date.now },
     paymentMethodType: { type: String },
     cardBrand: { type: String },
     cardLast4: { type: String },
   },
-  { _id: false }
+  { _id: false } // No separate _id
 );
 
-// Define the main Order schema
+// Main Order schema
 const orderSchema = new Schema<IOrder, IOrderModel>(
   {
     // Core fields
@@ -133,48 +123,47 @@ const orderSchema = new Schema<IOrder, IOrderModel>(
       index: true,
     },
     package: { type: Schema.Types.ObjectId, ref: "Package", required: true },
+
+    // Denormalized Package Info
     packageName: { type: String, required: true },
-    packagePrice: { type: Number, required: true },
-    deliveryDays: { type: Number, required: true },
-    startDate: { type: Date, required: true, default: Date.now },
-    endDate: { type: Date, required: true, index: true }, // Index endDate for expiration job
+    packagePrice: { type: Number, required: true }, // Store in cents
+    deliveryDays: { type: Number, required: true, min: 1 }, // Number of deliveries
+
+    // Scheduling
+    startDate: { type: Date, required: true, index: true }, // First actual delivery date
+    endDate: { type: Date, required: true, index: true }, // Last actual delivery date
+    deliverySchedule: { type: [Date], required: true }, // Array of specific delivery dates
+
+    // Overall Status
     status: {
       type: String,
       required: true,
-      enum: Object.values(OrderStatus), // Use enum values
+      enum: Object.values(OrderStatus),
       default: OrderStatus.ACTIVE,
       index: true,
     },
 
-    deliverySchedule: { type: [Date], default: [] },
-
-    // Sub-documents using defined schemas
-    deliveryAddress: { type: deliveryAddressSchema, required: true },
-    paymentDetails: { type: paymentDetailsSchema, required: true },
-
-    // Delivery Management fields
+    // Delivery Assignment
     assignedDriver: {
       type: Schema.Types.ObjectId,
-      ref: "Driver",
+      ref: "User",
       default: null,
       index: true,
-    },
-    deliveryStatus: {
-      type: String,
-      enum: Object.values(DeliveryStatus), // Use enum values
-      default: DeliveryStatus.PENDING_ASSIGNMENT,
-      index: true,
-    },
-    deliverySequence: { type: Number, default: null },
-    proofOfDeliveryUrl: { type: String },
+    }, // Assuming Driver is a User with 'driver' role
+
+    // Sub-documents
+    deliveryAddress: { type: deliveryAddressSchema, required: true },
+    paymentDetails: { type: paymentDetailsSchema, required: true },
   },
   {
-    timestamps: true, // Automatically add createdAt and updatedAt
+    timestamps: true, // Adds createdAt, updatedAt
   }
 );
 
-// --- Export the Mongoose Model ---
-// The model name 'Order' will result in a collection named 'orders' in MongoDB.
+// Ensure dates in deliverySchedule are stored correctly (UTC Midnight)
+// Pre-save hook might be less ideal here as it's an array.
+// Best to ensure dates pushed into the array are already normalized before saving.
+
 export const Order: IOrderModel = mongoose.model<IOrder, IOrderModel>(
   "Order",
   orderSchema
