@@ -127,7 +127,7 @@ export class AddonOrderService {
         currency: "cad",
         paymentStatus: "Pending",
         stripePaymentIntentId: paymentIntent.id,
-        deliveryStatus: DeliveryStatus.PENDING_ASSIGNMENT, // Use imported enum
+        deliveryStatus: DeliveryStatus.IN_PROGRESS, // Use imported enum
         deliveryAddress: originalOrder.deliveryAddress,
       };
       const createdAddonOrders = await AddonOrder.create([newAddonOrderData], {
@@ -201,7 +201,7 @@ export class AddonOrderService {
       return;
     }
     addonOrder.paymentStatus = "Succeeded";
-    addonOrder.deliveryStatus = DeliveryStatus.PENDING_ASSIGNMENT;
+    addonOrder.deliveryStatus = DeliveryStatus.IN_PROGRESS;
     try {
       await addonOrder.save();
       console.log(

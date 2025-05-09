@@ -3,10 +3,11 @@
 import mongoose, { Types } from "mongoose";
 import {
   Order,
+  IOrder,
   OrderStatus,
+  DeliveryStatus,
   IDeliveryAddress,
   IPaymentDetails,
-  IOrder,
 } from "../models/Order.model.js";
 import { Customer } from "../models/Customer.model.js";
 import { Package, IPackage } from "../models/Package.model.js";
@@ -40,15 +41,35 @@ interface NewOrderData {
   customer: Types.ObjectId;
   package: Types.ObjectId;
   packageName: string;
-  packagePrice: number; // Price in cents
+  packagePrice: number;
   deliveryDays: number;
   startDate: Date;
   endDate: Date;
   deliverySchedule: Date[];
   status: OrderStatus;
+  deliveryStatus: DeliveryStatus; // Added back
   assignedDriver: Types.ObjectId | null;
   deliveryAddress: IDeliveryAddress;
   paymentDetails: IPaymentDetails;
+}
+
+export interface IAdminOrderUpdatePayload {
+  status?: OrderStatus;
+  deliveryStatus?: DeliveryStatus;
+  assignedDriver?: Types.ObjectId | string | null;
+  // You can add more fields here that an admin is allowed to update
+  // For example:
+  // notes?: string;
+  // 'deliveryAddress.address'?: string; // For updating nested fields
+}
+
+interface GetAllOrdersAdminOptions {
+  page?: number;
+  limit?: number;
+  status?: string;
+  deliveryStatus?: string; // Allow filtering by deliveryStatus
+  search?: string;
+  sortBy?: string; // e.g., 'createdAt_desc', 'endDate_asc'
 }
 
 /**
@@ -236,7 +257,7 @@ export const createOrderFromPayment = async (
       endDate: calculatedEndDate,
       deliverySchedule: calculatedDeliveryDates,
       status: OrderStatus.ACTIVE,
-
+      deliveryStatus: DeliveryStatus.SCHEDULED,
       assignedDriver: null, // Defaulted
       deliveryAddress,
       paymentDetails,
@@ -296,4 +317,230 @@ export const createOrderFromPayment = async (
       );
     }
   }
+};
+
+/**
+ * Fetches all orders for a specific customer.
+ */
+export const getCustomerOrders = async (
+  customerId: string | Types.ObjectId
+): Promise<IOrder[]> => {
+  logger.debug(`[OrderService] Fetching orders for customer ID: ${customerId}`);
+  if (!Types.ObjectId.isValid(customerId)) {
+    throw new AppError("Invalid customer ID format.", 400);
+  }
+  return Order.find({ customer: new Types.ObjectId(customerId) })
+    .populate("package", "name type image price days") // Select fields you need
+    .sort({ createdAt: -1 });
+};
+
+/**
+ * Fetches a single order by its ID for a specific customer.
+ * Ensures the order belongs to the requesting customer.
+ */
+export const getCustomerOrderById = async (
+  orderId: string | Types.ObjectId,
+  customerId: string | Types.ObjectId
+): Promise<IOrder> => {
+  logger.debug(
+    `[OrderService] Fetching order ID: ${orderId} for customer ID: ${customerId}`
+  );
+  if (!Types.ObjectId.isValid(orderId) || !Types.ObjectId.isValid(customerId)) {
+    throw new AppError("Invalid order ID or customer ID format.", 400);
+  }
+
+  const order = await Order.findOne({
+    _id: new Types.ObjectId(orderId),
+    customer: new Types.ObjectId(customerId),
+  }).populate("package", "name type image price days deliveryDays"); // Add relevant package fields
+
+  if (!order) {
+    throw new AppError("Order not found or access denied.", 404);
+  }
+  return order;
+};
+
+/**
+ * Fetches all orders for the Admin Panel with pagination and filtering.
+ */
+export const getAllOrdersAdmin = async (
+  options: GetAllOrdersAdminOptions
+): Promise<{
+  orders: IOrder[];
+  totalOrders: number;
+  totalPages: number;
+  currentPage: number;
+  limit: number;
+}> => {
+  const page = options.page || 1;
+  const limit = options.limit || 15;
+  const skip = (page - 1) * limit;
+
+  logger.debug(`[OrderService] Admin fetching all orders. Options:`, options);
+
+  const filterQuery: mongoose.FilterQuery<IOrder> = {};
+
+  if (
+    options.status &&
+    Object.values(OrderStatus).includes(options.status as OrderStatus)
+  ) {
+    filterQuery.status = options.status as OrderStatus;
+  }
+  if (
+    options.deliveryStatus &&
+    Object.values(DeliveryStatus).includes(
+      options.deliveryStatus as DeliveryStatus
+    )
+  ) {
+    filterQuery.deliveryStatus = options.deliveryStatus as DeliveryStatus;
+  }
+
+  if (options.search) {
+    const searchRegex = new RegExp(options.search, "i");
+    filterQuery.$or = [
+      { orderNumber: { $regex: searchRegex } },
+      { packageName: { $regex: searchRegex } },
+      // Consider searching populated fields via separate queries or denormalization for performance
+      // { 'customer.fullName': { $regex: searchRegex } } // This won't work directly with .find()
+    ];
+  }
+
+  // Basic sort
+  let sortOption: any = { createdAt: -1 };
+  if (options.sortBy) {
+    const parts = options.sortBy.split("_"); // e.g. "createdAt_desc"
+    if (parts.length === 2) {
+      sortOption = { [parts[0]]: parts[1] === "desc" ? -1 : 1 };
+    }
+  }
+
+  const [totalOrders, orders] = await Promise.all([
+    Order.countDocuments(filterQuery),
+    Order.find(filterQuery)
+      .populate("customer", "fullName email mobile")
+      .populate("package", "name type")
+      .sort(sortOption)
+      .skip(skip)
+      .limit(limit),
+  ]);
+
+  const totalPages = Math.ceil(totalOrders / limit);
+
+  return { orders, totalOrders, totalPages, currentPage: page, limit };
+};
+
+/**
+ * Fetches a single order by its ID for an admin.
+ */
+export const getAdminOrderById = async (
+  orderId: string | Types.ObjectId
+): Promise<IOrder> => {
+  logger.debug(`[OrderService] Admin fetching order by ID: ${orderId}`);
+  if (!Types.ObjectId.isValid(orderId)) {
+    throw new AppError("Invalid order ID format.", 400);
+  }
+  const order = await Order.findById(orderId)
+    .populate(
+      "customer",
+      "fullName email mobile verification address city postalCode"
+    )
+    .populate("package") // Populate full package for admin
+    .populate("assignedDriver", "fullName email mobile"); // Populate driver if assigned
+
+  if (!order) {
+    throw new AppError("Order not found.", 404);
+  }
+  return order;
+};
+
+/**
+ * Updates an order by an admin.
+ */
+export const updateAdminOrder = async (
+  orderId: string | Types.ObjectId,
+  updateData: IAdminOrderUpdatePayload
+): Promise<IOrder> => {
+  logger.debug(
+    `[OrderService] Admin updating order ID: ${orderId} with data:`,
+    updateData
+  );
+  if (!Types.ObjectId.isValid(orderId)) {
+    throw new AppError("Invalid order ID format.", 400);
+  }
+
+  // Prepare the update payload, especially for unsetting or converting IDs
+  const finalUpdatePayload: any = {};
+  const setOperations: Partial<IOrder> = {};
+  const unsetOperations: any = {};
+
+  for (const key in updateData) {
+    const typedKey = key as keyof IAdminOrderUpdatePayload;
+    if (
+      updateData[typedKey] === null &&
+      typedKey === "assignedDriver" /* add other nullable fields here */
+    ) {
+      unsetOperations[typedKey] = "";
+    } else if (typedKey === "assignedDriver" && updateData.assignedDriver) {
+      setOperations[typedKey] = new Types.ObjectId(
+        updateData.assignedDriver as string
+      );
+    } else if (updateData[typedKey] !== undefined) {
+      (setOperations as any)[typedKey] = updateData[typedKey];
+    }
+  }
+
+  if (Object.keys(setOperations).length > 0) {
+    finalUpdatePayload.$set = setOperations;
+  }
+  if (Object.keys(unsetOperations).length > 0) {
+    finalUpdatePayload.$unset = unsetOperations;
+  }
+
+  if (Object.keys(finalUpdatePayload).length === 0) {
+    logger.warn(
+      `[OrderService] No valid update operations for order ID: ${orderId}. Fetching current order.`
+    );
+    // If no actual update operations, fetch and return current order or throw error.
+    // Let's fetch for consistency, or throw AppError for "no update data provided".
+    const currentOrder = await Order.findById(orderId);
+    if (!currentOrder) throw new AppError("Order not found for update.", 404);
+    return currentOrder;
+  }
+
+  const order = await Order.findByIdAndUpdate(orderId, finalUpdatePayload, {
+    new: true,
+    runValidators: true,
+  });
+
+  if (!order) {
+    throw new AppError("Order not found, or update failed.", 404); // findByIdAndUpdate returns null if not found
+  }
+  logger.info(
+    `[OrderService] Order ${order.orderNumber} updated successfully by admin.`
+  );
+  return order;
+};
+
+/**
+ * Deletes an order by an admin (hard delete).
+ */
+export const deleteAdminOrder = async (
+  orderId: string | Types.ObjectId
+): Promise<void> => {
+  logger.debug(
+    `[OrderService] Admin attempting to delete order ID: ${orderId}`
+  );
+  if (!Types.ObjectId.isValid(orderId)) {
+    throw new AppError("Invalid order ID format.", 400);
+  }
+
+  const result = await Order.findByIdAndDelete(orderId);
+
+  if (!result) {
+    throw new AppError("Order not found for deletion.", 404);
+  }
+  logger.info(
+    `[OrderService] Order ${result.orderNumber} deleted successfully by admin.`
+  );
+  // No explicit return value needed if successful, or return the deleted doc if desired
 };
