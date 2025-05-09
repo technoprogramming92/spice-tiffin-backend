@@ -3,7 +3,7 @@
 import axios from "axios";
 import type { IDeliveryAddress } from "../models/Order.model.js";
 import config from "../config/env.js";
-import logger from "../config/logger.js";
+// import logger from "../config/logger.js";
 
 // Interface for the expected coordinates result
 export interface GeocodeResult {
