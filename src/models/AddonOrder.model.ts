@@ -97,7 +97,7 @@ const addonOrderSchema = new Schema<IAddonOrder, IAddonOrderModel>(
       type: String,
       required: true,
       enum: Object.values(DeliveryStatus),
-      default: DeliveryStatus.PENDING_ASSIGNMENT,
+      default: DeliveryStatus.IN_PROGRESS,
       index: true,
     },
     deliveryAddress: { type: deliveryAddressSchema, required: true },

@@ -122,7 +122,7 @@ export const getAssignableOrders = async (req: Request, res: Response) => {
     console.log("[AdminController] Fetching assignable orders...");
 
     const assignableOrders = await Order.find({
-      deliveryStatus: DeliveryStatus.PENDING_ASSIGNMENT, // Use the enum value
+      deliveryStatus: DeliveryStatus.IN_PROGRESS, // Use the enum value
       "deliveryAddress.latitude": { $ne: null }, // Ensure latitude exists
       "deliveryAddress.longitude": { $ne: null }, // Ensure longitude exists
       // Optional: Add date filters if needed, e.g., for today's orders only

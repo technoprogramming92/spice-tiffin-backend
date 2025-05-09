@@ -30,7 +30,7 @@ export const getAssignedOrders = async (req: Request, res: Response) => {
     assignedDriver: driverId, // Filter by the specified driver
     // Default to fetching orders that are relevant for a current route
     deliveryStatus: {
-      $in: [DeliveryStatus.ASSIGNED, DeliveryStatus.OUT_FOR_DELIVERY],
+      $in: [DeliveryStatus.SCHEDULED, DeliveryStatus.IN_PROGRESS],
     },
     "deliveryAddress.latitude": { $ne: null }, // Ensure coordinates exist for mapping
     "deliveryAddress.longitude": { $ne: null },
@@ -95,12 +95,10 @@ export const assignOrdersToDriver = async (req: Request, res: Response) => {
 
   // 1. Validate input (driverId, orderIds)
   if (!driverId || !Array.isArray(orderIds) || orderIds.length === 0) {
-    return res
-      .status(400)
-      .json({
-        success: false,
-        message: "Driver ID and a list of order IDs are required.",
-      });
+    return res.status(400).json({
+      success: false,
+      message: "Driver ID and a list of order IDs are required.",
+    });
   }
 
   try {
@@ -116,12 +114,10 @@ export const assignOrdersToDriver = async (req: Request, res: Response) => {
   } catch (error: any) {
     // 4. Handle errors
     console.error("Error assigning orders:", error);
-    res
-      .status(500)
-      .json({
-        success: false,
-        message: error.message || "Failed to assign orders.",
-      });
+    res.status(500).json({
+      success: false,
+      message: error.message || "Failed to assign orders.",
+    });
   }
 };
 
